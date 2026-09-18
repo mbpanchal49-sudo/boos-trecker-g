@@ -1,5 +1,5 @@
 const express = require('express');
-// Axios require mat karo
+// Axios remove kar diya gaya hai taaki Vercel 500 Error na de
 const app = express();
 
 app.use(express.json());
@@ -53,8 +53,8 @@ async function sendMetaCapiEvent(userId) {
   }
 }
 
-// 1. Track Landing Page Click
-app.get('/api/track-click', (req, res) => {
+// 1. Track Landing Page Click (Support both GET & POST)
+app.all('/api/track-click', (req, res) => {
   analyticsData.totalClicks += 1;
   analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
   return res.json({
