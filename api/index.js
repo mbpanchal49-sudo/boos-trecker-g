@@ -1,147 +1,169 @@
 const express = require('express');
-const admin = require('firebase-admin');
-
+const axios = require('axios');
 const app = express();
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-if (!admin.apps.length) {
-  let serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (typeof serviceAccount === 'string') {
-    try {
-      serviceAccount = JSON.parse(serviceAccount);
-    } catch (e) {
-      console.error('Firebase JSON parse error:', e);
-    }
+// Environment Variables
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const META_PIXEL_ID = process.env.META_PIXEL_ID;
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
+
+// In-Memory Database (Aap isse Firebase se replace kar sakte ho)
+let analyticsData = {
+  totalClicks: 0,
+  totalJoins: 0,
+  fakeClicks: 0,
+  sentToMeta: 0,
+  recentJoins: []
+};
+
+// Meta CAPI Event Sending Function
+async function sendMetaCapiEvent(userId, userDetails = {}) {
+  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) {
+    console.log('Meta Credentials missing, skipping CAPI.');
+    return;
   }
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-}
-
-const db = admin.firestore();
-
-// Track Click Event
-app.post('/api/track-click', async (req, res) => {
-  try {
-    const { fbclid, event_id } = req.body;
-    await db.collection('clicks').add({
-      fbclid: fbclid || null,
-      event_id: event_id || null,
-      created_at: new Date().toISOString()
-    });
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Send CAPI to Meta
-async function sendMetaCAPI(fbclid, eventId) {
-  const pixelId = process.env.META_PIXEL_ID;
-  const token = process.env.META_ACCESS_TOKEN;
-  if (!pixelId || !token) return false;
 
   try {
-    const response = await fetch(`https://graph.facebook.com/v18.0/${pixelId}/events?access_token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: [{
+    const payload = {
+      data: [
+        {
           event_name: 'Lead',
           event_time: Math.floor(Date.now() / 1000),
-          action_source: 'website',
-          event_id: eventId || undefined,
-          user_data: { client_ip_address: '127.0.0.1', client_user_agent: 'TelegramBot' }
-        }]
-      })
-    });
-    const resData = await response.json();
-    return resData.events_received > 0;
-  } catch (e) {
-    return false;
+          action_source: 'system_generated',
+          user_data: {
+            external_id: [String(userId)]
+          }
+        }
+      ]
+    };
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
+      payload
+    );
+
+    if (response.data) {
+      analyticsData.sentToMeta += 1;
+      console.log('Meta CAPI Success:', response.data);
+    }
+  } catch (err) {
+    console.error('Meta CAPI Error:', err.response?.data || err.message);
   }
 }
 
-// Telegram Webhook Event
-app.post('/api/webhook', async (req, res) => {
+// 1. Click Tracking Route (Landing Page se click count karne ke liye)
+app.get('/api/track-click', (req, res) => {
+  analyticsData.totalClicks += 1;
+  analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
+  res.json({ success: true, totalClicks: analyticsData.totalClicks });
+});
+
+// 2. Telegram Webhook Endpoint
+app.post('/api', async (req, res) => {
   try {
     const update = req.body;
-    if (update.chat_member) {
-      const cm = update.chat_member;
-      const newStatus = cm.new_chat_member?.status;
-      const oldStatus = cm.old_chat_member?.status;
 
-      if (['member', 'administrator', 'creator'].includes(newStatus) && ['left', 'kicked'].includes(oldStatus)) {
-        const user = cm.new_chat_member.user;
-        const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Unknown';
-        const username = user.username ? `@${user.username}` : '—';
+    // CASE A: User "Request to Join" karta he (Without Auto-Approve)
+    if (update.chat_join_request) {
+      const joinReq = update.chat_join_request;
+      const userId = joinReq.from.id;
+      const name = `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User';
+      const username = joinReq.from.username ? `@${joinReq.from.username}` : '—';
 
-        const clicksSnap = await db.collection('clicks').orderBy('created_at', 'desc').limit(1).get();
-        let source = 'organic';
-        let sentToMeta = false;
+      // Check if user already counted
+      const alreadyJoined = analyticsData.recentJoins.some(j => j.userId === userId);
+      
+      if (!alreadyJoined) {
+        analyticsData.totalJoins += 1;
+        analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
 
-        if (!clicksSnap.empty) {
-          const lastClick = clicksSnap.docs[0].data();
-          if (lastClick.fbclid) {
-            source = 'meta_ads';
-            sentToMeta = await sendMetaCAPI(lastClick.fbclid, lastClick.event_id);
-          }
-        }
-
-        await db.collection('joins').add({
-          user_id: user.id,
+        analyticsData.recentJoins.unshift({
+          userId: userId,
           name: name,
           username: username,
           joined_at: new Date().toISOString(),
-          source: source,
-          sent_to_meta: sentToMeta
+          source: 'meta_ads',
+          sent_to_meta: true
         });
+
+        // Top 50 recent joins maintain rakhein
+        if (analyticsData.recentJoins.length > 50) {
+          analyticsData.recentJoins.pop();
+        }
+
+        // Meta CAPI Send
+        await sendMetaCapiEvent(userId);
       }
+
+      return res.status(200).send('OK');
     }
-    return res.status(200).send('OK');
-  } catch (error) {
-    return res.status(200).send('OK');
+
+    // CASE B: Direct Member Join Event (Normal Public/Invite Link)
+    if (update.chat_member) {
+      const member = update.chat_member;
+      const newStatus = member.new_chat_member?.status;
+
+      if (['member', 'administrator', 'creator'].includes(newStatus)) {
+        const user = member.new_chat_member.user;
+        const userId = user.id;
+        const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User';
+        const username = user.username ? `@${user.username}` : '—';
+
+        const alreadyJoined = analyticsData.recentJoins.some(j => j.userId === userId);
+
+        if (!alreadyJoined) {
+          analyticsData.totalJoins += 1;
+          analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
+
+          analyticsData.recentJoins.unshift({
+            userId: userId,
+            name: name,
+            username: username,
+            joined_at: new Date().toISOString(),
+            source: 'meta_ads',
+            sent_to_meta: true
+          });
+
+          if (analyticsData.recentJoins.length > 50) {
+            analyticsData.recentJoins.pop();
+          }
+
+          await sendMetaCapiEvent(userId);
+        }
+      }
+      return res.status(200).send('OK');
+    }
+
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Webhook Handling Error:', err);
+    res.status(200).send('OK');
   }
 });
 
-// Dashboard Stats Endpoint
-app.get('/api/stats', async (req, res) => {
-  const { password } = req.query;
-  if (!password || password !== process.env.DASHBOARD_PASSWORD) {
+// 3. Dashboard API Stats Route
+app.get('/api/stats', (req, res) => {
+  const pass = req.query.password;
+  if (pass !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  try {
-    const clicksSnap = await db.collection('clicks').get();
-    const joinsSnap = await db.collection('joins').get();
+  const conversionRate = analyticsData.totalClicks > 0
+    ? ((analyticsData.totalJoins / analyticsData.totalClicks) * 100).toFixed(1)
+    : '0';
 
-    const totalClicks = clicksSnap.size;
-    const totalJoins = joinsSnap.size;
-    let sentToMeta = 0;
-    const recentJoins = [];
-
-    joinsSnap.forEach(doc => {
-      const d = doc.data();
-      if (d.sent_to_meta) sentToMeta++;
-      recentJoins.push(d);
-    });
-
-    recentJoins.sort((a, b) => new Date(b.joined_at) - new Date(a.joined_at));
-
-    const fakeClicks = Math.max(0, totalClicks - totalJoins);
-    const conversionRate = totalClicks > 0 ? ((totalJoins / totalClicks) * 100).toFixed(1) : 0;
-
-    return res.status(200).json({
-      totalClicks,
-      totalJoins,
-      fakeClicks,
-      conversionRate,
-      sentToMeta,
-      recentJoins: recentJoins.slice(0, 50)
-    });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
+  res.json({
+    totalClicks: analyticsData.totalClicks,
+    totalJoins: analyticsData.totalJoins,
+    fakeClicks: analyticsData.fakeClicks,
+    conversionRate: conversionRate,
+    sentToMeta: analyticsData.sentToMeta,
+    recentJoins: analyticsData.recentJoins
+  });
 });
 
 module.exports = app;
