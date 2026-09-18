@@ -122,9 +122,7 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
     }, 4000);
   })();
 
-  // Updated Reliable Click Tracking Handler
   function trackClick() {
-    // navigator.sendBeacon redirect hone par bhi background me request complete karta hai
     if (navigator.sendBeacon) {
       navigator.sendBeacon('/api/track-click');
     } else {
@@ -140,7 +138,6 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
       });
     }
     
-    // Call Click Tracking Endpoint
     trackClick();
 
     this.style.transform = 'scale(.94)';
