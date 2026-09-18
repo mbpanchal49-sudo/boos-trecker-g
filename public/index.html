@@ -122,21 +122,14 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
     }, 4000);
   })();
 
-  function getFbclid() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('fbclid') || null;
-  }
-
-  async function trackClick() {
-    const fbclid = getFbclid();
-    const eventId = 'click_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    try {
-      await fetch('/api/track-click', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fbclid: fbclid, event_id: eventId })
-      });
-    } catch (e) { console.warn('Track click failed:', e); }
+  // Updated Reliable Click Tracking Handler
+  function trackClick() {
+    // navigator.sendBeacon redirect hone par bhi background me request complete karta hai
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/track-click');
+    } else {
+      fetch('/api/track-click', { method: 'GET', keepalive: true }).catch(function(e){ console.warn(e); });
+    }
   }
 
   document.getElementById('joinBtn').addEventListener('click', function(e){
@@ -146,7 +139,10 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
         content_category: 'Channel'
       });
     }
+    
+    // Call Click Tracking Endpoint
     trackClick();
+
     this.style.transform = 'scale(.94)';
     const t = this;
     setTimeout(function(){ t.style.transform = ''; }, 180);
