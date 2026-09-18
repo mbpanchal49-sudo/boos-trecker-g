@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Global memory state (Vercel warm containers ke liye)
+// Global state to hold analytics data in Vercel warm containers
 global.analyticsData = global.analyticsData || {
   totalClicks: 0,
   totalJoins: 0,
@@ -19,10 +19,10 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Helper: Meta Conversions API (CAPI) Event Sender
+// Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) {
-    console.log('Meta credentials missing in env variables.');
+    console.log('Meta Pixel ID or Access Token is missing.');
     return;
   }
   try {
@@ -43,23 +43,23 @@ async function sendMetaCapiEvent(userId) {
   }
 }
 
-// 1. Landing Page Click Route (Jab user landing page par Join button dabaye)
+// 1. Track Landing Page Click
 app.get('/api/track-click', (req, res) => {
   analyticsData.totalClicks += 1;
   analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
-  return res.json({ 
-    success: true, 
-    totalClicks: analyticsData.totalClicks, 
-    fakeClicks: analyticsData.fakeClicks 
+  return res.json({
+    success: true,
+    totalClicks: analyticsData.totalClicks,
+    fakeClicks: analyticsData.fakeClicks
   });
 });
 
-// 2. Telegram Webhook Listener
+// 2. Telegram Webhook Handler
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
 
-    // Event A: Request to Join (Jab client ke channel me pending join request aati hai)
+    // Handle "Request to Join" (Pending Join Request)
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
       const userId = joinReq.from.id;
@@ -70,7 +70,7 @@ app.post('/api', async (req, res) => {
       if (!exists) {
         analyticsData.totalJoins += 1;
         analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
-        
+
         analyticsData.recentJoins.unshift({
           userId: userId,
           name: name,
@@ -79,13 +79,12 @@ app.post('/api', async (req, res) => {
         });
 
         if (analyticsData.recentJoins.length > 50) analyticsData.recentJoins.pop();
-
         await sendMetaCapiEvent(userId);
       }
       return res.status(200).send('OK');
     }
 
-    // Event B: Direct Chat Member Join (Normal invite links ke liye)
+    // Handle Direct Channel Member Join
     if (update.chat_member) {
       const member = update.chat_member;
       const newStatus = member.new_chat_member?.status;
@@ -106,7 +105,6 @@ app.post('/api', async (req, res) => {
           });
 
           if (analyticsData.recentJoins.length > 50) analyticsData.recentJoins.pop();
-
           await sendMetaCapiEvent(user.id);
         }
       }
@@ -115,19 +113,19 @@ app.post('/api', async (req, res) => {
 
     res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('Webhook Error:', err);
     res.status(200).send('OK');
   }
 });
 
-// 3. Stats Fetching API Route (Dashboard data fetch karne ke liye)
+// 3. Dashboard Data Stats Endpoint
 app.get('/api/stats', (req, res) => {
   if (req.query.password !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const conversionRate = analyticsData.totalClicks > 0 
-    ? ((analyticsData.totalJoins / analyticsData.totalClicks) * 100).toFixed(1) 
+  const conversionRate = analyticsData.totalClicks > 0
+    ? ((analyticsData.totalJoins / analyticsData.totalClicks) * 100).toFixed(1)
     : '0';
 
   res.json({
