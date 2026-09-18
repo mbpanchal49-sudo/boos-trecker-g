@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vertex Media™ — Boss Jets Analytics</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  :root{
+    --bg:#0a0e1a; --bg2:#111827; --card:#1a1f35; --card2:#232a45; --border:#2a3250;
+    --blue:#3b82f6; --blue2:#60a5fa; --green:#10b981; --red:#ef4444;
+    --orange:#f59e0b; --purple:#8b5cf6;
+    --ink:#f1f5f9; --muted:#94a3b8; --muted2:#64748b;
+  }
+  html,body{ height:100%; }
+  body{ font-family:'Inter','Segoe UI',-apple-system,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; overflow-x:hidden; }
+  .bg-glow{ position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none; }
+  .glow{ position:absolute; border-radius:50%; filter:blur(100px); opacity:.25; animation:float 18s ease-in-out infinite; }
+  .g1{ width:500px; height:500px; background:#3b82f6; top:-150px; left:-150px; }
+  .g2{ width:400px; height:400px; background:#8b5cf6; bottom:-100px; right:-100px; animation-delay:-6s; }
+  .g3{ width:350px; height:350px; background:#10b981; top:40%; left:30%; animation-delay:-12s; opacity:.15; }
+  @keyframes float{ 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,-40px) scale(1.15); } }
+  .login-screen{ position:fixed; inset:0; z-index:100; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:20px; transition:opacity .5s ease, visibility .5s ease; }
+  .login-screen.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+  .login-box{ background:var(--card); border:1px solid var(--border); border-radius:20px; padding:44px 34px; width:100%; max-width:420px; box-shadow:0 20px 60px rgba(0,0,0,.5); animation:popIn .6s cubic-bezier(.2,.8,.2,1) both; position:relative; overflow:hidden; }
+  .login-box::before{ content:''; position:absolute; top:0; left:0; right:0; height:3px; background:linear-gradient(90deg,#3b82f6,#8b5cf6,#10b981); background-size:200% 100%; animation:shimmerBar 3s linear infinite; }
+  @keyframes shimmerBar{ 0%{background-position:0% 50%;} 100%{background-position:200% 50%;} }
+  @keyframes popIn{ from{opacity:0; transform:scale(.9) translateY(20px);} to{opacity:1; transform:scale(1) translateY(0);} }
+  .login-logo{ display:flex; align-items:center; justify-content:center; gap:11px; margin-bottom:10px; }
+  .login-logo-icon{ width:48px; height:48px; border-radius:14px; background:linear-gradient(135deg,#3b82f6,#8b5cf6); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:22px; color:#fff; box-shadow:0 8px 24px rgba(59,130,246,.4); animation:pulseGlow 2.5s ease-in-out infinite; }
+  @keyframes pulseGlow{ 0%,100%{ box-shadow:0 8px 24px rgba(59,130,246,.4); } 50%{ box-shadow:0 8px 36px rgba(139,92,246,.6); } }
+  .login-logo-text{ font-size:19px; font-weight:800; letter-spacing:-.3px; }
+  .login-logo-text span{ color:var(--blue2); }
+  .login-title{ text-align:center; margin-top:18px; font-size:17px; font-weight:800; letter-spacing:-.2px; }
+  .login-sub{ text-align:center; color:var(--muted); font-size:12.5px; margin-top:6px; margin-bottom:30px; letter-spacing:.4px; }
+  .login-box label{ display:block; font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:9px; letter-spacing:1px; text-transform:uppercase; }
+  .input-wrap{ position:relative; }
+  .login-box input{ width:100%; padding:15px 48px 15px 16px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; color:var(--ink); font-size:14.5px; font-family:inherit; outline:none; transition:all .25s ease; letter-spacing:1px; }
+  .login-box input:focus{ border-color:var(--blue); box-shadow:0 0 0 4px rgba(59,130,246,.12); }
+  .login-box input.error{ border-color:var(--red); box-shadow:0 0 0 4px rgba(239,68,68,.12); animation:shake .4s ease; }
+  @keyframes shake{ 0%,100%{ transform:translateX(0); } 25%{ transform:translateX(-6px); } 75%{ transform:translateX(6px); } }
+  .toggle-pass{ position:absolute; right:14px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; padding:6px; color:var(--muted); display:flex; align-items:center; transition:color .2s; }
+  .toggle-pass:hover{ color:var(--blue2); }
+  .toggle-pass svg{ width:17px; height:17px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .login-btn{ width:100%; padding:15px; margin-top:20px; background:linear-gradient(135deg,#3b82f6,#6366f1); border:none; border-radius:12px; color:#fff; font-size:14.5px; font-weight:700; cursor:pointer; letter-spacing:.5px; transition:transform .2s, box-shadow .2s, opacity .2s; box-shadow:0 8px 24px rgba(59,130,246,.35); display:flex; align-items:center; justify-content:center; gap:9px; font-family:inherit; }
+  .login-btn:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 12px 32px rgba(59,130,246,.5); }
+  .login-btn:active:not(:disabled){ transform:scale(.97); }
+  .login-btn:disabled{ opacity:.7; cursor:not-allowed; }
+  .login-btn .spinner{ width:16px; height:16px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; display:none; }
+  .login-btn.loading .spinner{ display:block; }
+  .login-btn.loading .btn-text{ display:none; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .login-error{ color:var(--red); font-size:12.5px; margin-top:14px; text-align:center; min-height:18px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px; }
+  .login-footer{ text-align:center; margin-top:24px; padding-top:20px; border-top:1px solid var(--border); font-size:11px; color:var(--muted2); letter-spacing:.5px; }
+  .login-footer b{ background:linear-gradient(90deg,#3b82f6,#8b5cf6); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; font-weight:800; }
+  .dash{ position:relative; z-index:1; display:none; }
+  .dash.active{ display:block; animation:fadeIn .5s ease both; }
+  @keyframes fadeIn{ from{opacity:0;} to{opacity:1;} }
+  .nav{ background:rgba(17,24,39,.85); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); padding:16px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; }
+  .nav-left{ display:flex; align-items:center; gap:12px; }
+  .brand-icon{ width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg,#3b82f6,#8b5cf6); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:16px; color:#fff; box-shadow:0 6px 18px rgba(59,130,246,.4); }
+  .brand-text h1{ font-size:15px; font-weight:800; letter-spacing:-.2px; }
+  .brand-text p{ font-size:11px; color:var(--muted); letter-spacing:.5px; margin-top:1px; }
+  .nav-right{ display:flex; align-items:center; gap:14px; }
+  .live-badge{ display:flex; align-items:center; gap:6px; background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.3); padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; color:var(--green); letter-spacing:.5px; }
+  .live-dot{ width:7px; height:7px; border-radius:50%; background:var(--green); animation:pulse 1.5s ease-in-out infinite; box-shadow:0 0 8px var(--green); }
+  @keyframes pulse{ 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:.4; transform:scale(1.3);} }
+  .logout-btn{ background:var(--card); border:1px solid var(--border); color:var(--muted); padding:8px 16px; border-radius:10px; font-size:12.5px; font-weight:600; cursor:pointer; transition:all .2s; font-family:inherit; }
+  .logout-btn:hover{ color:var(--red); border-color:var(--red); }
+  .container{ max-width:1400px; margin:0 auto; padding:28px 24px 60px; }
+  .page-head{ margin-bottom:28px; }
+  .page-head h2{ font-size:26px; font-weight:800; letter-spacing:-.5px; }
+  .page-head p{ color:var(--muted); font-size:13.5px; margin-top:6px; }
+  .page-head p b{ color:var(--blue2); font-weight:700; }
+  .stats-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-bottom:28px; }
+  .stat-card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:22px; position:relative; overflow:hidden; transition:transform .25s ease, border-color .25s ease, box-shadow .25s ease; }
+  .stat-card:hover{ transform:translateY(-4px); border-color:var(--blue); box-shadow:0 12px 32px rgba(59,130,246,.15); }
+  .stat-card::before{ content:''; position:absolute; top:0; left:0; right:0; height:3px; background:linear-gradient(90deg,var(--blue),var(--purple)); opacity:.8; }
+  .stat-card.green::before{ background:linear-gradient(90deg,#10b981,#34d399); }
+  .stat-card.red::before{ background:linear-gradient(90deg,#ef4444,#f87171); }
+  .stat-card.orange::before{ background:linear-gradient(90deg,#f59e0b,#fbbf24); }
+  .stat-card.purple::before{ background:linear-gradient(90deg,#8b5cf6,#a78bfa); }
+  .stat-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .stat-label{ font-size:11px; font-weight:700; color:var(--muted); letter-spacing:1px; text-transform:uppercase; }
+  .stat-icon{ width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; background:rgba(59,130,246,.15); }
+  .stat-icon.green{ background:rgba(16,185,129,.15); }
+  .stat-icon.red{ background:rgba(239,68,68,.15); }
+  .stat-icon.orange{ background:rgba(245,158,11,.15); }
+  .stat-icon.purple{ background:rgba(139,92,246,.15); }
+  .stat-icon svg{ width:17px; height:17px; stroke:var(--blue2); fill:none; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+  .stat-icon.green svg{ stroke:#34d399; }
+  .stat-icon.red svg{ stroke:#f87171; }
+  .stat-icon.orange svg{ stroke:#fbbf24; }
+  .stat-icon.purple svg{ stroke:#a78bfa; }
+  .stat-value{ font-size:32px; font-weight:800; letter-spacing:-1px; line-height:1; margin-bottom:6px; font-variant-numeric:tabular-nums; }
+  .stat-value.green{ color:var(--green); }
+  .stat-value.red{ color:var(--red); }
+  .stat-value.orange{ color:var(--orange); }
+  .stat-value.purple{ color:var(--purple); }
+  .stat-sub{ font-size:12px; color:var(--muted2); font-weight:500; }
+  .section{ background:var(--card); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+  .section-head{ padding:20px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  .section-head h3{ font-size:16px; font-weight:800; letter-spacing:-.3px; display:flex; align-items:center; gap:10px; }
+  .section-head h3 .dot-badge{ width:8px; height:8px; border-radius:50%; background:var(--green); animation:pulse 1.5s ease-in-out infinite; box-shadow:0 0 8px var(--green); }
+  .section-head .count-badge{ background:rgba(59,130,246,.15); color:var(--blue2); font-size:12px; font-weight:700; padding:5px 12px; border-radius:999px; letter-spacing:.5px; }
+  .refresh-btn{ background:var(--card2); border:1px solid var(--border); color:var(--muted); padding:8px 14px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all .2s; font-family:inherit; }
+  .refresh-btn:hover{ color:var(--blue2); border-color:var(--blue); }
+  .refresh-btn.spinning svg{ animation:spin .8s linear infinite; }
+  .refresh-btn svg{ width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  thead th{ background:var(--bg2); padding:13px 20px; text-align:left; font-size:11px; font-weight:700; color:var(--muted); letter-spacing:1px; text-transform:uppercase; border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:15px 20px; border-bottom:1px solid var(--border); color:var(--ink); font-weight:500; white-space:nowrap; }
+  tbody tr{ transition:background .15s; }
+  tbody tr:hover{ background:rgba(59,130,246,.05); }
+  tbody tr:last-child td{ border-bottom:none; }
+  .user-cell{ display:flex; align-items:center; gap:11px; }
+  .user-avatar{ width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,#3b82f6,#8b5cf6); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:13px; color:#fff; flex-shrink:0; box-shadow:0 4px 12px rgba(59,130,246,.3); }
+  .user-info .name{ font-weight:700; font-size:13.5px; }
+  .badge{ display:inline-flex; align-items:center; gap:5px; padding:5px 11px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.4px; }
+  .badge.green{ background:rgba(16,185,129,.13); color:var(--green); border:1px solid rgba(16,185,129,.25); }
+  .badge.blue{ background:rgba(59,130,246,.13); color:var(--blue2); border:1px solid rgba(59,130,246,.25); }
+  .badge.orange{ background:rgba(245,158,11,.13); color:var(--orange); border:1px solid rgba(245,158,11,.25); }
+  .badge.red{ background:rgba(239,68,68,.13); color:var(--red); border:1px solid rgba(239,68,68,.25); }
+  .time-cell{ color:var(--muted); font-size:12.5px; font-variant-numeric:tabular-nums; }
+  .state-box{ padding:60px 24px; text-align:center; color:var(--muted); }
+  .state-box svg{ width:44px; height:44px; stroke:var(--muted2); fill:none; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; margin-bottom:14px; opacity:.6; }
+  .state-box p{ font-size:13.5px; }
+  .state-box .sub{ font-size:12px; color:var(--muted2); margin-top:5px; }
+  .loading-spinner{ width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 14px; }
+  .footer{ text-align:center; padding:28px 24px; color:var(--muted2); font-size:12px; border-top:1px solid var(--border); margin-top:40px; letter-spacing:.4px; }
+  .footer .vertex{ background:linear-gradient(90deg,#3b82f6,#8b5cf6); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; font-weight:800; }
+  @media (max-width:640px){
+    .login-box{ padding:34px 24px; }
+    .nav{ padding:12px 16px; }
+    .brand-text h1{ font-size:13.5px; }
+    .brand-text p{ font-size:10px; }
+    .brand-icon{ width:34px; height:34px; font-size:14px; }
+    .live-badge{ font-size:10px; padding:5px 10px; }
+    .logout-btn{ padding:7px 12px; font-size:11.5px; }
+    .container{ padding:20px 16px 40px; }
+    .page-head h2{ font-size:20px; }
+    .page-head p{ font-size:12.5px; }
+    .stats-grid{ grid-template-columns:repeat(2,1fr); gap:10px; }
+    .stat-card{ padding:16px; border-radius:13px; }
+    .stat-value{ font-size:24px; }
+    .stat-label{ font-size:10px; }
+    .stat-icon{ width:28px; height:28px; }
+    .stat-icon svg{ width:14px; height:14px; }
+    .section-head{ padding:16px 18px; }
+    .section-head h3{ font-size:14px; }
+    .count-badge{ font-size:11px; padding:4px 10px; }
+    .refresh-btn{ font-size:11px; padding:7px 11px; }
+    thead th{ padding:11px 14px; font-size:10px; }
+    tbody td{ padding:12px 14px; font-size:12.5px; }
+    .user-avatar{ width:30px; height:30px; font-size:11.5px; }
+    .user-info .name{ font-size:12.5px; }
+    .badge{ font-size:10px; padding:4px 9px; }
+    .time-cell{ font-size:11.5px; }
+    .footer{ font-size:11px; padding:22px 16px; }
+  }
+  @media (max-width:380px){
+    .stats-grid{ grid-template-columns:1fr; }
+    .page-head h2{ font-size:18px; }
+    .stat-value{ font-size:22px; }
+    .login-box{ padding:28px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-glow">
+  <div class="glow g1"></div>
+  <div class="glow g2"></div>
+  <div class="glow g3"></div>
+</div>
+
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-icon">V</div>
+      <div class="login-logo-text">Vertex <span>Media</span>™</div>
+    </div>
+    <h2 class="login-title">Analytics Dashboard</h2>
+    <p class="login-sub">BOSS JETS TRACKER — SECURE ACCESS</p>
+    <label for="password">Enter Password</label>
+    <div class="input-wrap">
+      <input type="password" id="password" placeholder="••••••••" autocomplete="off">
+      <button class="toggle-pass" id="togglePass" type="button" onclick="togglePassword()">
+        <svg id="eyeIcon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+    <button class="login-btn" id="loginBtn" onclick="handleLogin()">
+      <span class="btn-text">Unlock Dashboard</span>
+      <span class="spinner"></span>
+    </button>
+    <div class="login-error" id="loginError"></div>
+    <div class="login-footer">Powered by <b>Vertex Media™</b></div>
+  </div>
+</div>
+
+<div class="dash" id="dash">
+  <nav class="nav">
+    <div class="nav-left">
+      <div class="brand-icon">V</div>
+      <div class="brand-text">
+        <h1>Vertex Media™</h1>
+        <p>BOSS JETS TRACKER</p>
+      </div>
+    </div>
+    <div class="nav-right">
+      <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+      <button class="logout-btn" onclick="handleLogout()">Logout</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="page-head">
+      <h2>Boss Jets — Analytics Overview</h2>
+      <p>Real-time tracking of <b>Meta clicks</b> vs <b>Telegram joins</b> — powered by Vertex Media™</p>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-head">
+          <span class="stat-label">Total Clicks</span>
+          <div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+        </div>
+        <div class="stat-value" id="totalClicks">—</div>
+        <div class="stat-sub">Meta ads se aaye clicks</div>
+      </div>
+
+      <div class="stat-card green">
+        <div class="stat-head">
+          <span class="stat-label">Real Joins</span>
+          <div class="stat-icon green"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        </div>
+        <div class="stat-value green" id="totalJoins">—</div>
+        <div class="stat-sub">Telegram me actual join</div>
+      </div>
+
+      <div class="stat-card red">
+        <div class="stat-head">
+          <span class="stat-label">Fake Clicks</span>
+          <div class="stat-icon red"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg></div>
+        </div>
+        <div class="stat-value red" id="fakeClicks">—</div>
+        <div class="stat-sub">Clicks jinhone join nahi kiya</div>
+      </div>
+
+      <div class="stat-card orange">
+        <div class="stat-head">
+          <span class="stat-label">Conversion Rate</span>
+          <div class="stat-icon orange"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div>
+        </div>
+        <div class="stat-value orange" id="convRate">—</div>
+        <div class="stat-sub">Click → Join percentage</div>
+      </div>
+
+      <div class="stat-card purple">
+        <div class="stat-head">
+          <span class="stat-label">Sent to Meta</span>
+          <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></div>
+        </div>
+        <div class="stat-value purple" id="sentToMeta">—</div>
+        <div class="stat-sub">CAPI events delivered</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h3><span class="dot-badge"></span>Recent Telegram Joins</h3>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="count-badge" id="joinCount">0 members</span>
+          <button class="refresh-btn" id="refreshBtn" onclick="loadStats(true)">
+            <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Username</th>
+              <th>Joined At</th>
+              <th>Source</th>
+              <th>Meta Status</th>
+            </tr>
+          </thead>
+          <tbody id="joinsBody">
+            <tr><td colspan="5">
+              <div class="state-box">
+                <div class="loading-spinner"></div>
+                <p>Loading members...</p>
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="footer">
+      Built with ❤️ by <span class="vertex">Vertex Media™</span> &nbsp;•&nbsp; Powered by <b>Boss Jets Tracker</b>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_BASE = window.location.origin;
+  let refreshInterval = null;
+  let currentPassword = '';
+
+  function togglePassword(){
+    const input = document.getElementById('password');
+    const icon = document.getElementById('eyeIcon');
+    if(input.type === 'password'){
+      input.type = 'text';
+      icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    } else {
+      input.type = 'password';
+      icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+  }
+
+  function handleLogin(){
+    const input = document.getElementById('password');
+    const btn = document.getElementById('loginBtn');
+    const errEl = document.getElementById('loginError');
+    const pass = input.value.trim();
+    errEl.textContent = '';
+    input.classList.remove('error');
+    
+    if(!pass){ 
+      input.classList.add('error'); 
+      errEl.textContent = '⚠️ Password daalein'; 
+      return; 
+    }
+
+    btn.classList.add('loading');
+    btn.disabled = true;
+
+    currentPassword = pass;
+    errEl.style.color = '#10b981';
+    errEl.textContent = '✓ Verified';
+    
+    setTimeout(() => {
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('dash').classList.add('active');
+      btn.classList.remove('loading');
+      btn.disabled = false;
+      
+      loadStats();
+      if(refreshInterval) clearInterval(refreshInterval);
+      refreshInterval = setInterval(() => loadStats(false), 30000);
+    }, 400);
+  }
+
+  document.getElementById('password').addEventListener('keydown', e => {
+    if(e.key === 'Enter') handleLogin();
+  });
+
+  function handleLogout(){
+    if(refreshInterval) clearInterval(refreshInterval);
+    document.getElementById('dash').classList.remove('active');
+    document.getElementById('loginScreen').classList.remove('hidden');
+    document.getElementById('password').value = '';
+    document.getElementById('loginError').textContent = '';
+    currentPassword = '';
+  }
+
+  function animateNumber(el, target){
+    const start = parseInt(el.textContent.replace(/[^0-9]/g,'')) || 0;
+    const duration = 700;
+    const startTime = performance.now();
+    const isPercent = el.dataset.percent === 'true';
+    function tick(now){
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = Math.floor(start + (target - start) * eased);
+      el.textContent = isPercent ? current + '%' : current.toLocaleString('en-US');
+      if(progress < 1) requestAnimationFrame(tick);
+      else el.textContent = isPercent ? target + '%' : target.toLocaleString('en-US');
+    }
+    requestAnimationFrame(tick);
+  }
+
+  async function loadStats(showLoading){
+    if(!currentPassword) return;
+    const btn = document.getElementById('refreshBtn');
+    if(showLoading) btn.classList.add('spinning');
+
+    try {
+      const res = await fetch(`${API_BASE}/api/stats?password=${encodeURIComponent(currentPassword)}`);
+      if(!res.ok) throw new Error('unauthorized');
+      const data = await res.json();
+
+      animateNumber(document.getElementById('totalClicks'), data.totalClicks || 0);
+      animateNumber(document.getElementById('totalJoins'), data.totalJoins || 0);
+      animateNumber(document.getElementById('fakeClicks'), data.fakeClicks || 0);
+
+      const convEl = document.getElementById('convRate');
+      convEl.dataset.percent = 'true';
+      animateNumber(convEl, parseFloat(data.conversionRate) || 0);
+
+      animateNumber(document.getElementById('sentToMeta'), data.sentToMeta || 0);
+      document.getElementById('joinCount').textContent = (data.recentJoins?.length || 0) + ' recent';
+      renderJoins(data.recentJoins || []);
+    } catch(e){ console.error(e); }
+    finally { setTimeout(() => btn.classList.remove('spinning'), 400); }
+  }
+
+  function renderJoins(joins){
+    const tbody = document.getElementById('joinsBody');
+    if(!joins.length){
+      tbody.innerHTML = `
+        <tr><td colspan="5">
+          <div class="state-box">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            <p>Abhi tak koi join nahi hua</p>
+            <p class="sub">Jab members join karenge, yahan dikhenge</p>
+          </div>
+        </td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = joins.map(j => {
+      const initial = (j.name || '?').trim().charAt(0).toUpperCase();
+      const uname = j.username && j.username !== '—' ? j.username : '<span style="color:var(--muted2)">no username</span>';
+      const date = formatDate(j.joined_at);
+      const sourceBadge = j.source === 'meta_ads'
+        ? '<span class="badge blue">Meta Ads</span>'
+        : '<span class="badge orange">Organic</span>';
+      const metaBadge = j.sent_to_meta
+        ? '<span class="badge green">✓ Sent</span>'
+        : '<span class="badge red">Pending</span>';
+
+      return `
+        <tr>
+          <td>
+            <div class="user-cell">
+              <div class="user-avatar">${initial}</div>
+              <div class="user-info"><span class="name">${escapeHtml(j.name || 'Unknown')}</span></div>
+            </div>
+          </td>
+          <td>${uname}</td>
+          <td><span class="time-cell">${date}</span></td>
+          <td>${sourceBadge}</td>
+          <td>${metaBadge}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  function formatDate(iso){
+    if(!iso) return '—';
+    const d = new Date(iso);
+    if(isNaN(d)) return '—';
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if(diff < 60) return 'just now';
+    if(diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if(diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>
