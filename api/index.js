@@ -1,5 +1,4 @@
 const express = require('express');
-// Axios remove kar diya gaya hai taaki Vercel 500 Error na de
 const app = express();
 
 app.use(express.json());
@@ -56,7 +55,7 @@ async function sendMetaCapiEvent(userId) {
 // 1. Track Landing Page Click (Support both GET & POST)
 app.all('/api/track-click', (req, res) => {
   analyticsData.totalClicks += 1;
-  analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
+  analyticsData.fakeClicks += 1; // Direct independent count
   return res.json({
     success: true,
     totalClicks: analyticsData.totalClicks,
@@ -79,7 +78,6 @@ app.post('/api', async (req, res) => {
       const exists = analyticsData.recentJoins.some(j => j.userId === userId);
       if (!exists) {
         analyticsData.totalJoins += 1;
-        analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
 
         analyticsData.recentJoins.unshift({
           userId: userId,
@@ -105,7 +103,6 @@ app.post('/api', async (req, res) => {
 
         if (!exists) {
           analyticsData.totalJoins += 1;
-          analyticsData.fakeClicks = Math.max(0, analyticsData.totalClicks - analyticsData.totalJoins);
 
           analyticsData.recentJoins.unshift({
             userId: user.id,
@@ -128,11 +125,16 @@ app.post('/api', async (req, res) => {
   }
 });
 
-// 3. Dashboard Data Stats Endpoint
+// 3. Dashboard Data Stats Endpoint (Instant updates with No-Cache)
 app.get('/api/stats', (req, res) => {
   if (req.query.password !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+
+  // Prevent browser & serverless caching
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
   const conversionRate = analyticsData.totalClicks > 0
     ? ((analyticsData.totalJoins / analyticsData.totalClicks) * 100).toFixed(1)
