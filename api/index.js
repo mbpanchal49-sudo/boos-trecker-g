@@ -78,13 +78,12 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Instant Request to Join Tracking)
+// 2. Telegram Webhook Handler (Request to Join & Member Join Direct Track)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
 
-    // Direct Instant Request to Join Handler
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
       userToTrack = {
@@ -92,9 +91,7 @@ app.post('/api', async (req, res) => {
         name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
         username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
       };
-    } 
-    // Direct Member Join Handler
-    else if (update.chat_member) {
+    } else if (update.chat_member) {
       const member = update.chat_member;
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
@@ -111,9 +108,9 @@ app.post('/api', async (req, res) => {
       const currentData = doc.exists ? doc.data() : {};
       const recentJoins = currentData.recentJoins || [];
 
-      const exists = recentJoins.some(j => j.userId === userToTrack.userId);
+      // Check if user is already counted
+      const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        // Send Meta Event First
         const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
 
         userToTrack.joined_at = new Date().toISOString();
@@ -151,7 +148,7 @@ app.get('/api/stats', async (req, res) => {
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
     
-    // Dynamic Fake Clicks formula
+    // Fake Clicks calculation: Total Clicks minus Real Joins
     const fakeClicks = Math.max(0, totalClicks - totalJoins);
 
     const conversionRate = totalClicks > 0
