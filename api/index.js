@@ -24,9 +24,9 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper - Transmits Lead & Subscribe Events
+// Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId) {
-  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return;
+  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
   try {
     const response = await fetch(
       `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
@@ -56,21 +56,19 @@ async function sendMetaCapiEvent(userId) {
       await statsRef.set({
         sentToMeta: admin.firestore.FieldValue.increment(1)
       }, { merge: true });
-    } else {
-      const errData = await response.json();
-      console.error('Meta CAPI Error:', errData);
+      return true;
     }
   } catch (err) {
     console.error('Meta CAPI Error:', err.message);
   }
+  return false;
 }
 
-// 1. Track Landing Page Click (Saves to Firebase instantly)
+// 1. Track Landing Page Click
 app.all('/api/track-click', async (req, res) => {
   try {
     await statsRef.set({
-      totalClicks: admin.firestore.FieldValue.increment(1),
-      fakeClicks: admin.firestore.FieldValue.increment(1)
+      totalClicks: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
 
     return res.json({ success: true });
@@ -80,12 +78,13 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler
+// 2. Telegram Webhook Handler (Instant Request to Join Tracking)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
 
+    // Direct Instant Request to Join Handler
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
       userToTrack = {
@@ -93,7 +92,9 @@ app.post('/api', async (req, res) => {
         name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
         username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
       };
-    } else if (update.chat_member) {
+    } 
+    // Direct Member Join Handler
+    else if (update.chat_member) {
       const member = update.chat_member;
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
@@ -112,7 +113,12 @@ app.post('/api', async (req, res) => {
 
       const exists = recentJoins.some(j => j.userId === userToTrack.userId);
       if (!exists) {
+        // Send Meta Event First
+        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
+
         userToTrack.joined_at = new Date().toISOString();
+        userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
+
         recentJoins.unshift(userToTrack);
         if (recentJoins.length > 50) recentJoins.pop();
 
@@ -120,8 +126,6 @@ app.post('/api', async (req, res) => {
           totalJoins: admin.firestore.FieldValue.increment(1),
           recentJoins: recentJoins
         }, { merge: true });
-
-        await sendMetaCapiEvent(userToTrack.userId);
       }
     }
 
@@ -132,7 +136,7 @@ app.post('/api', async (req, res) => {
   }
 });
 
-// 3. Dashboard Data Stats Endpoint (Reads from Firebase)
+// 3. Dashboard Stats Endpoint
 app.get('/api/stats', async (req, res) => {
   if (req.query.password !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -142,16 +146,14 @@ app.get('/api/stats', async (req, res) => {
 
   try {
     const doc = await statsRef.get();
-    const data = doc.exists ? doc.data() : {
-      totalClicks: 0,
-      totalJoins: 0,
-      fakeClicks: 0,
-      sentToMeta: 0,
-      recentJoins: []
-    };
+    const data = doc.exists ? doc.data() : {};
 
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
+    
+    // Dynamic Fake Clicks formula
+    const fakeClicks = Math.max(0, totalClicks - totalJoins);
+
     const conversionRate = totalClicks > 0
       ? ((totalJoins / totalClicks) * 100).toFixed(1)
       : '0';
@@ -159,7 +161,7 @@ app.get('/api/stats', async (req, res) => {
     res.json({
       totalClicks: totalClicks,
       totalJoins: totalJoins,
-      fakeClicks: data.fakeClicks || 0,
+      fakeClicks: fakeClicks,
       conversionRate: conversionRate,
       sentToMeta: data.sentToMeta || 0,
       recentJoins: data.recentJoins || []
