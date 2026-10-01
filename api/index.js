@@ -24,8 +24,7 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// ⚠️ AAPKI SPECIFIC TELEGRAM INVITE LINK (Vercel Environment Variable me ya yahan paste karein)
-// Example: 'https://t.me/+ABC123xyz...'
+// ⚠️ TAMARI TELEGRAM INVITE LINK AHIYA E.G. '+abc123xyz' YA VERCEL ENV MA MOOBO
 const MY_INVITE_LINK = process.env.MY_INVITE_LINK || '';
 
 // Meta Conversions API (CAPI) Helper
@@ -82,22 +81,26 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Filter By Specific Invite Link)
+// 2. Telegram Webhook Handler (Only Process OUR Invite Link)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
+    let incomingInviteLink = '';
 
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
-      
-      // Check if request came from OUR specific invite link
-      const requestLink = joinReq.invite_link ? joinReq.invite_link.invite_link : '';
-      
-      // MY_INVITE_LINK configured hai aur match nahi karti toh ignore karo
-      if (MY_INVITE_LINK && requestLink && !requestLink.includes(MY_INVITE_LINK.replace('https://t.me/', ''))) {
-        console.log('Ignored join request from another manager invite link:', requestLink);
-        return res.status(200).send('OK (Ignored Other Link)');
+      incomingInviteLink = joinReq.invite_link ? (joinReq.invite_link.invite_link || '') : '';
+
+      // Check if MY_INVITE_LINK is configured and matches incoming request
+      if (MY_INVITE_LINK && incomingInviteLink) {
+        const cleanMyLink = MY_INVITE_LINK.replace('https://t.me/', '').replace('+', '');
+        const cleanIncLink = incomingInviteLink.replace('https://t.me/', '').replace('+', '');
+
+        if (!cleanIncLink.includes(cleanMyLink)) {
+          console.log('Ignored request from another link:', incomingInviteLink);
+          return res.status(200).send('Ignored: Other manager link');
+        }
       }
 
       userToTrack = {
@@ -105,23 +108,6 @@ app.post('/api', async (req, res) => {
         name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
         username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
       };
-    } else if (update.chat_member) {
-      const member = update.chat_member;
-      if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
-        const user = member.new_chat_member.user;
-        
-        // Invite link validation for direct members if available
-        const requestLink = member.invite_link ? member.invite_link.invite_link : '';
-        if (MY_INVITE_LINK && requestLink && !requestLink.includes(MY_INVITE_LINK.replace('https://t.me/', ''))) {
-          return res.status(200).send('OK (Ignored Other Link)');
-        }
-
-        userToTrack = {
-          userId: user.id,
-          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-          username: user.username ? `@${user.username}` : '—'
-        };
-      }
     }
 
     if (userToTrack) {
@@ -132,7 +118,7 @@ app.post('/api', async (req, res) => {
       // Duplicate Check
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        // Only send to Meta Pixel for OUR invite link joins!
+        // Only send CAPI to Meta for OUR verified link!
         const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
 
         userToTrack.joined_at = new Date().toISOString();
