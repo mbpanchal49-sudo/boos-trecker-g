@@ -24,14 +24,8 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// ---------------- AAPKA CHANNEL INVITE LINK ----------------
-const MY_CHANNEL_INVITE_LINK = 'https://t.me/+V_OjtSP5zfM0ZGQ8';
-
-// ---------------- AAPKA BOT TOKEN ----------------
-const BOT_TOKEN = '8971603924:AAH7-GrMKg1_CxM0rVPY5Tjh_XOQdh7CuVs';
-
-// ---------------- AAPKA LANDING PAGE LINK ----------------
-const LANDING_PAGE_URL = 'https://boos-trecker-g-jxvi.vercel.app/';
+// SIRF INVITE HASH CHECK KARO (exact link nahi)
+const MY_INVITE_HASH = 'V_OjtSP5zfM0ZGQ8';
 
 // Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
@@ -102,42 +96,61 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Sirf Landing Page Wale Join Count Honge)
+// 2. Telegram Webhook Handler
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
 
+    // ---- CASE 1: JOIN REQUEST ----
     if (update.chat_join_request) {
-      // Join request aayi hai, lekin abhi count nahi karenge
-      // Kyunki join request me invite_link nahi hota
-      console.log('Join request received, waiting for actual join...');
+      const joinReq = update.chat_join_request;
       
-    } else if (update.chat_member) {
+      // Join request me invite_link nahi hota, isliye hum isko
+      // tabhi count karenge jab user ne actual join kiya ho
+      // Lekin kuch cases me chat_member update nahi aata, isliye
+      // hum join request ko bhi track kar sakte hain (optional)
+      
+      console.log('Join request received from user:', joinReq.from.id);
+      
+      // Agar aap chahte ho ki join request par bhi count ho, to
+      // neeche wala code uncomment karo:
+      /*
+      userToTrack = {
+        userId: joinReq.from.id,
+        name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
+        username: joinReq.from.username ? `@${joinReq.from.username}` : '—',
+        source: 'join_request'
+      };
+      */
+    }
+
+    // ---- CASE 2: ACTUAL MEMBER JOIN ----
+    if (update.chat_member) {
       const member = update.chat_member;
       
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
-        
-        // YAHAN CHECK KARO KI USER KAUNSE INVITE LINK SE AAYA HAI
         const inviteLink = member.invite_link?.invite_link || '';
         
-        console.log('User joined via invite link:', inviteLink);
+        console.log('User joined. Invite link:', inviteLink);
         
-        // Agar user aapke landing page wale invite link se aaya hai, to hi count karo
-        if (inviteLink === MY_CHANNEL_INVITE_LINK) {
+        // SIRF HASH CHECK KARO (exact link nahi)
+        if (inviteLink && inviteLink.includes(MY_INVITE_HASH)) {
+          console.log('✅ User joined via MY landing page link');
           userToTrack = {
             userId: user.id,
             name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
             username: user.username ? `@${user.username}` : '—',
-            inviteLink: inviteLink
+            source: 'chat_member'
           };
         } else {
-          console.log('User joined via different link, ignoring:', inviteLink);
+          console.log('❌ User joined via different link:', inviteLink);
         }
       }
     }
 
+    // ---- COUNT KARO ----
     if (userToTrack) {
       const doc = await statsRef.get();
       const currentData = doc.exists ? doc.data() : {};
@@ -145,12 +158,7 @@ app.post('/api', async (req, res) => {
 
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        const isMetaSent = await sendMetaCapiEvent(
-          userToTrack.userId,
-          '0.0.0.0',
-          'TelegramBot',
-          null
-        );
+        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId, '0.0.0.0', 'TelegramBot', null);
 
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
@@ -162,6 +170,10 @@ app.post('/api', async (req, res) => {
           totalJoins: admin.firestore.FieldValue.increment(1),
           recentJoins: recentJoins
         }, { merge: true });
+
+        console.log('✅ Join counted for user:', userToTrack.userId);
+      } else {
+        console.log('⚠️ User already counted:', userToTrack.userId);
       }
     }
 
