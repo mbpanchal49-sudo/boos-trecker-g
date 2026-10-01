@@ -24,6 +24,10 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
+// ⚠️ AAPKI SPECIFIC TELEGRAM INVITE LINK (Vercel Environment Variable me ya yahan paste karein)
+// Example: 'https://t.me/+ABC123xyz...'
+const MY_INVITE_LINK = process.env.MY_INVITE_LINK || '';
+
 // Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
@@ -78,7 +82,7 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Request to Join & Member Join Direct Track)
+// 2. Telegram Webhook Handler (Filter By Specific Invite Link)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
@@ -86,6 +90,16 @@ app.post('/api', async (req, res) => {
 
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
+      
+      // Check if request came from OUR specific invite link
+      const requestLink = joinReq.invite_link ? joinReq.invite_link.invite_link : '';
+      
+      // MY_INVITE_LINK configured hai aur match nahi karti toh ignore karo
+      if (MY_INVITE_LINK && requestLink && !requestLink.includes(MY_INVITE_LINK.replace('https://t.me/', ''))) {
+        console.log('Ignored join request from another manager invite link:', requestLink);
+        return res.status(200).send('OK (Ignored Other Link)');
+      }
+
       userToTrack = {
         userId: joinReq.from.id,
         name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
@@ -95,6 +109,13 @@ app.post('/api', async (req, res) => {
       const member = update.chat_member;
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
+        
+        // Invite link validation for direct members if available
+        const requestLink = member.invite_link ? member.invite_link.invite_link : '';
+        if (MY_INVITE_LINK && requestLink && !requestLink.includes(MY_INVITE_LINK.replace('https://t.me/', ''))) {
+          return res.status(200).send('OK (Ignored Other Link)');
+        }
+
         userToTrack = {
           userId: user.id,
           name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
@@ -108,9 +129,10 @@ app.post('/api', async (req, res) => {
       const currentData = doc.exists ? doc.data() : {};
       const recentJoins = currentData.recentJoins || [];
 
-      // Check if user is already counted
+      // Duplicate Check
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
+        // Only send to Meta Pixel for OUR invite link joins!
         const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
 
         userToTrack.joined_at = new Date().toISOString();
@@ -147,13 +169,16 @@ app.get('/api/stats', async (req, res) => {
 
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
-    
-    // Fake Clicks calculation: Total Clicks minus Real Joins
     const fakeClicks = Math.max(0, totalClicks - totalJoins);
 
     const conversionRate = totalClicks > 0
       ? ((totalJoins / totalClicks) * 100).toFixed(1)
       : '0';
+
+    const recentJoinsFormatted = (data.recentJoins || []).map(join => ({
+      ...join,
+      metaStatus: join.metaStatus || 'Sent'
+    }));
 
     res.json({
       totalClicks: totalClicks,
@@ -161,7 +186,7 @@ app.get('/api/stats', async (req, res) => {
       fakeClicks: fakeClicks,
       conversionRate: conversionRate,
       sentToMeta: data.sentToMeta || 0,
-      recentJoins: data.recentJoins || []
+      recentJoins: recentJoinsFormatted
     });
   } catch (err) {
     console.error('Stats Fetch Error:', err);
