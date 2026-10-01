@@ -122,12 +122,15 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
     }, 4000);
   })();
 
-  function trackClick() {
-    // Facebook Click ID (fbclid) capture karo
+  // Facebook Click ID (fbclid) capture karo
+  function getFbclid() {
     var urlParams = new URLSearchParams(window.location.search);
-    var fbclid = urlParams.get('fbclid') || '';
-    
-    // Backend ko bhejo
+    return urlParams.get('fbclid') || '';
+  }
+
+  // Backend ko click track karo (fbclid ke saath)
+  function trackClick() {
+    var fbclid = getFbclid();
     var payload = { fbclid: fbclid };
     
     if (navigator.sendBeacon) {
@@ -143,9 +146,10 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
   }
 
   document.getElementById('joinBtn').addEventListener('click', function(e){
-    // fbq('track', 'Lead') hata diya - ab sirf backend se signal jayega
+    // Backend ko click track karo
     trackClick();
 
+    // Button animation
     this.style.transform = 'scale(.94)';
     const t = this;
     setTimeout(function(){ t.style.transform = ''; }, 180);
