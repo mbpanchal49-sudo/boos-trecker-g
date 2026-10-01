@@ -24,38 +24,52 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// ⚠️ TAMARI TELEGRAM INVITE LINK AHIYA E.G. '+abc123xyz' YA VERCEL ENV MA MOOBO
-const MY_INVITE_LINK = process.env.MY_INVITE_LINK || '';
-
-// Meta Conversions API (CAPI) Helper
-async function sendMetaCapiEvent(userId) {
+// Meta Conversions API (CAPI) Helper - UPDATED
+async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
+  
   try {
+    // Prepare user_data
+    const userData = {
+      external_id: [String(userId)],
+      client_ip_address: userIp || '0.0.0.0',
+      client_user_agent: userAgent || 'Unknown'
+    };
+
+    // Add Facebook Click ID (fbc) if available
+    if (fbc) {
+      userData.fbc = fbc;
+    }
+
+    const payload = {
+      data: [
+        {
+          event_name: 'Subscribe', // Changed from 'Lead' to 'Subscribe'
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          user_data: userData,
+          custom_data: {
+            currency: 'USD',
+            value: 1.00,
+            content_name: 'Telegram Channel Join'
+          }
+        }
+      ]
+    };
+
     const response = await fetch(
       `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: [
-            {
-              event_name: 'Lead',
-              event_time: Math.floor(Date.now() / 1000),
-              action_source: 'system_generated',
-              user_data: { external_id: [String(userId)] }
-            },
-            {
-              event_name: 'Subscribe',
-              event_time: Math.floor(Date.now() / 1000),
-              action_source: 'system_generated',
-              user_data: { external_id: [String(userId)] }
-            }
-          ]
-        })
+        body: JSON.stringify(payload)
       }
     );
 
-    if (response.ok) {
+    const data = await response.json();
+    console.log('Meta CAPI Response:', data);
+
+    if (response.ok && data.events_received) {
       await statsRef.set({
         sentToMeta: admin.firestore.FieldValue.increment(1)
       }, { merge: true });
@@ -67,9 +81,14 @@ async function sendMetaCapiEvent(userId) {
   return false;
 }
 
-// 1. Track Landing Page Click
+// 1. Track Landing Page Click (Frontend se fbclid bhi accept karega)
 app.all('/api/track-click', async (req, res) => {
   try {
+    const fbclid = req.query.fbclid || req.body.fbclid || '';
+    const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    // Store click data temporarily (optional, but helpful for debugging)
     await statsRef.set({
       totalClicks: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
@@ -81,33 +100,29 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Only Process OUR Invite Link)
+// 2. Telegram Webhook Handler
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
-    let incomingInviteLink = '';
 
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
-      incomingInviteLink = joinReq.invite_link ? (joinReq.invite_link.invite_link || '') : '';
-
-      // Check if MY_INVITE_LINK is configured and matches incoming request
-      if (MY_INVITE_LINK && incomingInviteLink) {
-        const cleanMyLink = MY_INVITE_LINK.replace('https://t.me/', '').replace('+', '');
-        const cleanIncLink = incomingInviteLink.replace('https://t.me/', '').replace('+', '');
-
-        if (!cleanIncLink.includes(cleanMyLink)) {
-          console.log('Ignored request from another link:', incomingInviteLink);
-          return res.status(200).send('Ignored: Other manager link');
-        }
-      }
-
       userToTrack = {
         userId: joinReq.from.id,
         name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
         username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
       };
+    } else if (update.chat_member) {
+      const member = update.chat_member;
+      if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
+        const user = member.new_chat_member.user;
+        userToTrack = {
+          userId: user.id,
+          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+          username: user.username ? `@${user.username}` : '—'
+        };
+      }
     }
 
     if (userToTrack) {
@@ -115,11 +130,17 @@ app.post('/api', async (req, res) => {
       const currentData = doc.exists ? doc.data() : {};
       const recentJoins = currentData.recentJoins || [];
 
-      // Duplicate Check
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        // Only send CAPI to Meta for OUR verified link!
-        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
+        // Note: Telegram webhook mein IP/UserAgent nahi milta, isliye hum generic bhej rahe hain.
+        // Lekin fbc (Click ID) humein frontend se chahiye hoga. 
+        // Filhal ke liye hum bina fbc ke bhej rahe hain, lekin IP/UserAgent add kar rahe hain.
+        const isMetaSent = await sendMetaCapiEvent(
+          userToTrack.userId, 
+          '0.0.0.0', // Telegram webhook mein IP nahi hota
+          'TelegramBot', // Telegram webhook mein UserAgent nahi hota
+          null // fbc null hai kyunki Telegram se nahi aa raha
+        );
 
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
@@ -161,18 +182,13 @@ app.get('/api/stats', async (req, res) => {
       ? ((totalJoins / totalClicks) * 100).toFixed(1)
       : '0';
 
-    const recentJoinsFormatted = (data.recentJoins || []).map(join => ({
-      ...join,
-      metaStatus: join.metaStatus || 'Sent'
-    }));
-
     res.json({
       totalClicks: totalClicks,
       totalJoins: totalJoins,
       fakeClicks: fakeClicks,
       conversionRate: conversionRate,
       sentToMeta: data.sentToMeta || 0,
-      recentJoins: recentJoinsFormatted
+      recentJoins: data.recentJoins || []
     });
   } catch (err) {
     console.error('Stats Fetch Error:', err);
