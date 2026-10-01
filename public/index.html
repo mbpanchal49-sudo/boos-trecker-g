@@ -123,21 +123,27 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
   })();
 
   function trackClick() {
+    // Facebook Click ID (fbclid) capture karo
+    var urlParams = new URLSearchParams(window.location.search);
+    var fbclid = urlParams.get('fbclid') || '';
+    
+    // Backend ko bhejo
+    var payload = { fbclid: fbclid };
+    
     if (navigator.sendBeacon) {
-      navigator.sendBeacon('/api/track-click');
+      navigator.sendBeacon('/api/track-click', JSON.stringify(payload));
     } else {
-      fetch('/api/track-click', { method: 'GET', keepalive: true }).catch(function(e){ console.warn(e); });
+      fetch('/api/track-click', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true 
+      }).catch(function(e){ console.warn(e); });
     }
   }
 
   document.getElementById('joinBtn').addEventListener('click', function(e){
-    if (typeof fbq === 'function') {
-      fbq('track', 'Lead', {
-        content_name: 'Telegram Channel Join',
-        content_category: 'Channel'
-      });
-    }
-    
+    // fbq('track', 'Lead') hata diya - ab sirf backend se signal jayega
     trackClick();
 
     this.style.transform = 'scale(.94)';
