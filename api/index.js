@@ -24,7 +24,7 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper
+// Meta Conversions API (CAPI) Helper - Lead aur Subscribe dono bhejega
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
   
@@ -39,11 +39,24 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
       userData.fbc = fbc;
     }
 
+    const currentTime = Math.floor(Date.now() / 1000);
+
     const payload = {
       data: [
         {
+          event_name: 'Lead',
+          event_time: currentTime,
+          action_source: 'website',
+          user_data: userData,
+          custom_data: {
+            currency: 'USD',
+            value: 1.00,
+            content_name: 'Telegram Channel Join'
+          }
+        },
+        {
           event_name: 'Subscribe',
-          event_time: Math.floor(Date.now() / 1000),
+          event_time: currentTime,
           action_source: 'website',
           user_data: userData,
           custom_data: {
@@ -95,7 +108,6 @@ app.all('/api/track-click', async (req, res) => {
     const currentData = doc.exists ? doc.data() : {};
     const pendingClicks = currentData.pendingClicks || [];
 
-    // Purane pending clicks (5 minute se zyada purane) ko hata do
     const fiveMinutesAgo = now - 5 * 60 * 1000;
     const stillPending = pendingClicks.filter(c => c.timestamp > fiveMinutesAgo);
     stillPending.push(newClick);
@@ -127,14 +139,12 @@ app.post('/api', async (req, res) => {
       
       console.log('Join request from user:', user.id);
       
-      // Time-based matching: Check karo ki pichle 30 second me koi click hua tha
       const doc = await statsRef.get();
       const currentData = doc.exists ? doc.data() : {};
       const pendingClicks = currentData.pendingClicks || [];
       const now = Date.now();
       const thirtySecondsAgo = now - 30 * 1000;
 
-      // Sabse recent click dhoondo jo 30 second ke andar hua ho
       let matchedClick = null;
       for (let i = pendingClicks.length - 1; i >= 0; i--) {
         if (pendingClicks[i].timestamp >= thirtySecondsAgo) {
@@ -154,7 +164,6 @@ app.post('/api', async (req, res) => {
           matchedClick: matchedClick
         };
 
-        // Us click ko pending se hata do (kyunki wo real tha)
         const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
         await statsRef.set({
           pendingClicks: updatedPending
@@ -165,7 +174,7 @@ app.post('/api', async (req, res) => {
       }
     }
 
-    // ---- CASE 2: ACTUAL MEMBER JOIN (AGAR APPROVAL KE BAAD AAYE) ----
+    // ---- CASE 2: ACTUAL MEMBER JOIN ----
     if (update.chat_member) {
       const member = update.chat_member;
       
@@ -175,7 +184,6 @@ app.post('/api', async (req, res) => {
         
         console.log('User joined via chat_member. Invite link:', inviteLink);
         
-        // Agar invite link match karta hai, to bhi count karo (agar pehle se count nahi hua)
         if (inviteLink && inviteLink.includes('V_OjtSP5zfM0ZGQ8')) {
           console.log('✅ User joined via MY landing page link (chat_member)');
           userToTrack = {
@@ -190,7 +198,7 @@ app.post('/api', async (req, res) => {
       }
     }
 
-    // ---- COUNT KARO ----
+    // ---- COUNT KARO AUR META KO SIGNAL BHEJO ----
     if (userToTrack) {
       const doc = await statsRef.get();
       const currentData = doc.exists ? doc.data() : {};
@@ -217,6 +225,7 @@ app.post('/api', async (req, res) => {
         }, { merge: true });
 
         console.log('✅ Join counted for user:', userToTrack.userId);
+        console.log('✅ Meta signal sent (Lead + Subscribe):', isMetaSent);
       } else {
         console.log('⚠️ User already counted:', userToTrack.userId);
       }
