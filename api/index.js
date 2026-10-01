@@ -24,9 +24,6 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// SIRF INVITE HASH CHECK KARO (exact link nahi)
-const MY_INVITE_HASH = 'V_OjtSP5zfM0ZGQ8';
-
 // Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
@@ -82,11 +79,30 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   return false;
 }
 
-// 1. Track Landing Page Click
+// 1. Track Landing Page Click (Timestamp ke saath)
 app.all('/api/track-click', async (req, res) => {
   try {
+    const now = Date.now();
+    
+    const newClick = {
+      timestamp: now,
+      fbclid: req.query.fbclid || req.body.fbclid || '',
+      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] || ''
+    };
+
+    const doc = await statsRef.get();
+    const currentData = doc.exists ? doc.data() : {};
+    const pendingClicks = currentData.pendingClicks || [];
+
+    // Purane pending clicks (5 minute se zyada purane) ko hata do
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
+    const stillPending = pendingClicks.filter(c => c.timestamp > fiveMinutesAgo);
+    stillPending.push(newClick);
+
     await statsRef.set({
-      totalClicks: admin.firestore.FieldValue.increment(1)
+      totalClicks: admin.firestore.FieldValue.increment(1),
+      pendingClicks: stillPending
     }, { merge: true });
 
     return res.json({ success: true });
@@ -102,30 +118,54 @@ app.post('/api', async (req, res) => {
     const update = req.body;
     let userToTrack = null;
 
-    // ---- CASE 1: JOIN REQUEST ----
+    console.log('Webhook received:', JSON.stringify(update, null, 2));
+
+    // ---- CASE 1: JOIN REQUEST (30 SECOND WINDOW) ----
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
+      const user = joinReq.from;
       
-      // Join request me invite_link nahi hota, isliye hum isko
-      // tabhi count karenge jab user ne actual join kiya ho
-      // Lekin kuch cases me chat_member update nahi aata, isliye
-      // hum join request ko bhi track kar sakte hain (optional)
+      console.log('Join request from user:', user.id);
       
-      console.log('Join request received from user:', joinReq.from.id);
+      // Time-based matching: Check karo ki pichle 30 second me koi click hua tha
+      const doc = await statsRef.get();
+      const currentData = doc.exists ? doc.data() : {};
+      const pendingClicks = currentData.pendingClicks || [];
+      const now = Date.now();
+      const thirtySecondsAgo = now - 30 * 1000;
+
+      // Sabse recent click dhoondo jo 30 second ke andar hua ho
+      let matchedClick = null;
+      for (let i = pendingClicks.length - 1; i >= 0; i--) {
+        if (pendingClicks[i].timestamp >= thirtySecondsAgo) {
+          matchedClick = pendingClicks[i];
+          break;
+        }
+      }
       
-      // Agar aap chahte ho ki join request par bhi count ho, to
-      // neeche wala code uncomment karo:
-      /*
-      userToTrack = {
-        userId: joinReq.from.id,
-        name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
-        username: joinReq.from.username ? `@${joinReq.from.username}` : '—',
-        source: 'join_request'
-      };
-      */
+      if (matchedClick) {
+        console.log('✅ Join request within 30 seconds of landing page click');
+        
+        userToTrack = {
+          userId: user.id,
+          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+          username: user.username ? `@${user.username}` : '—',
+          source: 'join_request',
+          matchedClick: matchedClick
+        };
+
+        // Us click ko pending se hata do (kyunki wo real tha)
+        const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+        await statsRef.set({
+          pendingClicks: updatedPending
+        }, { merge: true });
+        
+      } else {
+        console.log('❌ Join request but no recent landing page click (within 30 sec)');
+      }
     }
 
-    // ---- CASE 2: ACTUAL MEMBER JOIN ----
+    // ---- CASE 2: ACTUAL MEMBER JOIN (AGAR APPROVAL KE BAAD AAYE) ----
     if (update.chat_member) {
       const member = update.chat_member;
       
@@ -133,11 +173,11 @@ app.post('/api', async (req, res) => {
         const user = member.new_chat_member.user;
         const inviteLink = member.invite_link?.invite_link || '';
         
-        console.log('User joined. Invite link:', inviteLink);
+        console.log('User joined via chat_member. Invite link:', inviteLink);
         
-        // SIRF HASH CHECK KARO (exact link nahi)
-        if (inviteLink && inviteLink.includes(MY_INVITE_HASH)) {
-          console.log('✅ User joined via MY landing page link');
+        // Agar invite link match karta hai, to bhi count karo (agar pehle se count nahi hua)
+        if (inviteLink && inviteLink.includes('V_OjtSP5zfM0ZGQ8')) {
+          console.log('✅ User joined via MY landing page link (chat_member)');
           userToTrack = {
             userId: user.id,
             name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
@@ -158,7 +198,12 @@ app.post('/api', async (req, res) => {
 
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId, '0.0.0.0', 'TelegramBot', null);
+        const isMetaSent = await sendMetaCapiEvent(
+          userToTrack.userId, 
+          userToTrack.matchedClick ? userToTrack.matchedClick.ip : '0.0.0.0',
+          userToTrack.matchedClick ? userToTrack.matchedClick.userAgent : 'TelegramBot',
+          userToTrack.matchedClick ? userToTrack.matchedClick.fbclid : null
+        );
 
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
