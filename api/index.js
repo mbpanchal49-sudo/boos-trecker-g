@@ -24,19 +24,26 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper - UPDATED
+// ---------------- AAPKA CHANNEL INVITE LINK ----------------
+const MY_CHANNEL_INVITE_LINK = 'https://t.me/+V_OjtSP5zfM0ZGQ8';
+
+// ---------------- AAPKA BOT TOKEN ----------------
+const BOT_TOKEN = '8971603924:AAH7-GrMKg1_CxM0rVPY5Tjh_XOQdh7CuVs';
+
+// ---------------- AAPKA LANDING PAGE LINK ----------------
+const LANDING_PAGE_URL = 'https://boos-trecker-g-jxvi.vercel.app/';
+
+// Meta Conversions API (CAPI) Helper
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
   
   try {
-    // Prepare user_data
     const userData = {
       external_id: [String(userId)],
       client_ip_address: userIp || '0.0.0.0',
       client_user_agent: userAgent || 'Unknown'
     };
 
-    // Add Facebook Click ID (fbc) if available
     if (fbc) {
       userData.fbc = fbc;
     }
@@ -44,7 +51,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
     const payload = {
       data: [
         {
-          event_name: 'Subscribe', // Changed from 'Lead' to 'Subscribe'
+          event_name: 'Subscribe',
           event_time: Math.floor(Date.now() / 1000),
           action_source: 'website',
           user_data: userData,
@@ -81,14 +88,9 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   return false;
 }
 
-// 1. Track Landing Page Click (Frontend se fbclid bhi accept karega)
+// 1. Track Landing Page Click
 app.all('/api/track-click', async (req, res) => {
   try {
-    const fbclid = req.query.fbclid || req.body.fbclid || '';
-    const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    const userAgent = req.headers['user-agent'];
-
-    // Store click data temporarily (optional, but helpful for debugging)
     await statsRef.set({
       totalClicks: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
@@ -100,28 +102,39 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler
+// 2. Telegram Webhook Handler (Sirf Landing Page Wale Join Count Honge)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
 
     if (update.chat_join_request) {
-      const joinReq = update.chat_join_request;
-      userToTrack = {
-        userId: joinReq.from.id,
-        name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
-        username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
-      };
+      // Join request aayi hai, lekin abhi count nahi karenge
+      // Kyunki join request me invite_link nahi hota
+      console.log('Join request received, waiting for actual join...');
+      
     } else if (update.chat_member) {
       const member = update.chat_member;
+      
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
-        userToTrack = {
-          userId: user.id,
-          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-          username: user.username ? `@${user.username}` : '—'
-        };
+        
+        // YAHAN CHECK KARO KI USER KAUNSE INVITE LINK SE AAYA HAI
+        const inviteLink = member.invite_link?.invite_link || '';
+        
+        console.log('User joined via invite link:', inviteLink);
+        
+        // Agar user aapke landing page wale invite link se aaya hai, to hi count karo
+        if (inviteLink === MY_CHANNEL_INVITE_LINK) {
+          userToTrack = {
+            userId: user.id,
+            name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+            username: user.username ? `@${user.username}` : '—',
+            inviteLink: inviteLink
+          };
+        } else {
+          console.log('User joined via different link, ignoring:', inviteLink);
+        }
       }
     }
 
@@ -132,14 +145,11 @@ app.post('/api', async (req, res) => {
 
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        // Note: Telegram webhook mein IP/UserAgent nahi milta, isliye hum generic bhej rahe hain.
-        // Lekin fbc (Click ID) humein frontend se chahiye hoga. 
-        // Filhal ke liye hum bina fbc ke bhej rahe hain, lekin IP/UserAgent add kar rahe hain.
         const isMetaSent = await sendMetaCapiEvent(
-          userToTrack.userId, 
-          '0.0.0.0', // Telegram webhook mein IP nahi hota
-          'TelegramBot', // Telegram webhook mein UserAgent nahi hota
-          null // fbc null hai kyunki Telegram se nahi aa raha
+          userToTrack.userId,
+          '0.0.0.0',
+          'TelegramBot',
+          null
         );
 
         userToTrack.joined_at = new Date().toISOString();
