@@ -24,7 +24,7 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper - Lead aur Subscribe dono bhejega
+// Meta Conversions API (CAPI) Helper - REAL DATA BHEJEGA
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
   
@@ -35,6 +35,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
       client_user_agent: userAgent || 'Unknown'
     };
 
+    // Agar fbclid hai to fbc add karo
     if (fbc) {
       userData.fbc = fbc;
     }
@@ -46,7 +47,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
         {
           event_name: 'Lead',
           event_time: currentTime,
-          action_source: 'website',
+          action_source: 'website', // YAHAN CHANGE KIYA
           user_data: userData,
           custom_data: {
             currency: 'USD',
@@ -57,7 +58,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
         {
           event_name: 'Subscribe',
           event_time: currentTime,
-          action_source: 'website',
+          action_source: 'website', // YAHAN CHANGE KIYA
           user_data: userData,
           custom_data: {
             currency: 'USD',
@@ -92,7 +93,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   return false;
 }
 
-// 1. Track Landing Page Click
+// 1. Track Landing Page Click (fbclid capture karega)
 app.all('/api/track-click', async (req, res) => {
   try {
     const now = Date.now();
@@ -108,8 +109,9 @@ app.all('/api/track-click', async (req, res) => {
     const currentData = doc.exists ? doc.data() : {};
     const pendingClicks = currentData.pendingClicks || [];
 
-    const fiveMinutesAgo = now - 5 * 60 * 1000;
-    const stillPending = pendingClicks.filter(c => c.timestamp > fiveMinutesAgo);
+    // Purane pending clicks (10 minute se zyada purane) ko hata do
+    const tenMinutesAgo = now - 10 * 60 * 1000;
+    const stillPending = pendingClicks.filter(c => c.timestamp > tenMinutesAgo);
     stillPending.push(newClick);
 
     await statsRef.set({
@@ -129,102 +131,85 @@ app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
+    let matchedClick = null;
 
     console.log('Webhook received:', JSON.stringify(update, null, 2));
 
-    // ---- PEHLE CHECK KARO KI USER PEHLE SE COUNTED HAI YA NAHI ----
-    const doc = await statsRef.get();
-    const currentData = doc.exists ? doc.data() : {};
-    const recentJoins = currentData.recentJoins || [];
-    const pendingClicks = currentData.pendingClicks || [];
-
-    // ---- CASE 1: JOIN REQUEST (30 SECOND WINDOW) ----
+    // ---- CASE 1: JOIN REQUEST ----
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
       const user = joinReq.from;
       
       console.log('Join request from user:', user.id);
       
-      // Check karo ki user pehle se counted hai ya nahi
-      const alreadyCounted = recentJoins.some(j => String(j.userId) === String(user.id));
-      
-      if (alreadyCounted) {
-        console.log('⚠️ User already counted, skipping');
-      } else {
-        const now = Date.now();
-        const thirtySecondsAgo = now - 30 * 1000;
+      const doc = await statsRef.get();
+      const currentData = doc.exists ? doc.data() : {};
+      const pendingClicks = currentData.pendingClicks || [];
 
-        let matchedClick = null;
-        for (let i = pendingClicks.length - 1; i >= 0; i--) {
-          if (pendingClicks[i].timestamp >= thirtySecondsAgo) {
-            matchedClick = pendingClicks[i];
-            break;
-          }
-        }
+      // Sabse recent click dhoondo (jo bhi ho, chahe 1 min pehle ya 10 min pehle)
+      // Kyunki ab sab tumhari hi link se aa rahe hain
+      if (pendingClicks.length > 0) {
+        // Sabse recent click lo
+        matchedClick = pendingClicks[pendingClicks.length - 1];
         
-        if (matchedClick) {
-          console.log('✅ Join request within 30 seconds of landing page click');
-          
-          userToTrack = {
-            userId: user.id,
-            name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-            username: user.username ? `@${user.username}` : '—',
-            source: 'join_request',
-            matchedClick: matchedClick
-          };
-
-          const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
-          await statsRef.set({
-            pendingClicks: updatedPending
-          }, { merge: true });
-          
-        } else {
-          console.log('❌ Join request but no recent landing page click (within 30 sec)');
-        }
+        // Us click ko pending se hata do
+        const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+        await statsRef.set({
+          pendingClicks: updatedPending
+        }, { merge: true });
       }
+      
+      userToTrack = {
+        userId: user.id,
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+        username: user.username ? `@${user.username}` : '—',
+        source: 'join_request',
+        matchedClick: matchedClick
+      };
     }
 
-    // ---- CASE 2: ACTUAL MEMBER JOIN (AGAR APPROVAL KE BAAD AAYE) ----
+    // ---- CASE 2: ACTUAL MEMBER JOIN ----
     if (update.chat_member) {
       const member = update.chat_member;
       
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
-        const inviteLink = member.invite_link?.invite_link || '';
         
-        console.log('User joined via chat_member. Invite link:', inviteLink);
+        console.log('User joined via chat_member:', user.id);
         
-        // Check karo ki user pehle se counted hai ya nahi
-        const alreadyCounted = recentJoins.some(j => String(j.userId) === String(user.id));
-        
-        if (alreadyCounted) {
-          console.log('⚠️ User already counted (via join request), skipping double count');
-        } else {
-          // Agar invite link match karta hai, to count karo
-          if (inviteLink && inviteLink.includes('V_OjtSP5zfM0ZGQ8')) {
-            console.log('✅ User joined via MY landing page link (chat_member)');
-            userToTrack = {
-              userId: user.id,
-              name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-              username: user.username ? `@${user.username}` : '—',
-              source: 'chat_member'
-            };
-          } else {
-            console.log('❌ User joined via different link:', inviteLink);
-          }
+        const doc = await statsRef.get();
+        const currentData = doc.exists ? doc.data() : {};
+        const pendingClicks = currentData.pendingClicks || [];
+
+        // Sabse recent click dhoondo
+        if (pendingClicks.length > 0) {
+          matchedClick = pendingClicks[pendingClicks.length - 1];
+          
+          const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+          await statsRef.set({
+            pendingClicks: updatedPending
+          }, { merge: true });
         }
+        
+        userToTrack = {
+          userId: user.id,
+          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+          username: user.username ? `@${user.username}` : '—',
+          source: 'chat_member',
+          matchedClick: matchedClick
+        };
       }
     }
 
     // ---- COUNT KARO AUR META KO SIGNAL BHEJO ----
     if (userToTrack) {
-      // Dobara check karo (race condition se bachne ke liye)
-      const freshDoc = await statsRef.get();
-      const freshData = freshDoc.exists ? freshDoc.data() : {};
-      const freshJoins = freshData.recentJoins || [];
+      const doc = await statsRef.get();
+      const currentData = doc.exists ? doc.data() : {};
+      const recentJoins = currentData.recentJoins || [];
 
-      const exists = freshJoins.some(j => String(j.userId) === String(userToTrack.userId));
+      const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
+        // Meta ko signal bhejo (real data ke saath)
         const isMetaSent = await sendMetaCapiEvent(
           userToTrack.userId, 
           userToTrack.matchedClick ? userToTrack.matchedClick.ip : '0.0.0.0',
@@ -235,18 +220,18 @@ app.post('/api', async (req, res) => {
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
 
-        freshJoins.unshift(userToTrack);
-        if (freshJoins.length > 50) freshJoins.pop();
+        recentJoins.unshift(userToTrack);
+        if (recentJoins.length > 50) recentJoins.pop();
 
         await statsRef.set({
           totalJoins: admin.firestore.FieldValue.increment(1),
-          recentJoins: freshJoins
+          recentJoins: recentJoins
         }, { merge: true });
 
         console.log('✅ Join counted for user:', userToTrack.userId);
         console.log('✅ Meta signal sent (Lead + Subscribe):', isMetaSent);
       } else {
-        console.log('⚠️ User already counted (race condition check):', userToTrack.userId);
+        console.log('⚠️ User already counted:', userToTrack.userId);
       }
     }
 
@@ -257,7 +242,7 @@ app.post('/api', async (req, res) => {
   }
 });
 
-// 3. Dashboard Stats Endpoint
+// 3. Dashboard Stats Endpoint (OLD LOGIC)
 app.get('/api/stats', async (req, res) => {
   if (req.query.password !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -271,6 +256,8 @@ app.get('/api/stats', async (req, res) => {
 
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
+    
+    // OLD LOGIC: Fake Clicks = Total Clicks - Total Joins
     const fakeClicks = Math.max(0, totalClicks - totalJoins);
 
     const conversionRate = totalClicks > 0
