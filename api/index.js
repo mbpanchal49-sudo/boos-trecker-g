@@ -24,64 +24,35 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper - REAL DATA BHEJEGA
-async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
+// Meta Conversions API (CAPI) Helper
+async function sendMetaCapiEvent(userId) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
-  
   try {
-    const userData = {
-      external_id: [String(userId)],
-      client_ip_address: userIp || '0.0.0.0',
-      client_user_agent: userAgent || 'Unknown'
-    };
-
-    // Agar fbclid hai to fbc add karo
-    if (fbc) {
-      userData.fbc = fbc;
-    }
-
-    const currentTime = Math.floor(Date.now() / 1000);
-
-    const payload = {
-      data: [
-        {
-          event_name: 'Lead',
-          event_time: currentTime,
-          action_source: 'website', // YAHAN CHANGE KIYA
-          user_data: userData,
-          custom_data: {
-            currency: 'USD',
-            value: 1.00,
-            content_name: 'Telegram Channel Join'
-          }
-        },
-        {
-          event_name: 'Subscribe',
-          event_time: currentTime,
-          action_source: 'website', // YAHAN CHANGE KIYA
-          user_data: userData,
-          custom_data: {
-            currency: 'USD',
-            value: 1.00,
-            content_name: 'Telegram Channel Join'
-          }
-        }
-      ]
-    };
-
     const response = await fetch(
       `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          data: [
+            {
+              event_name: 'Lead',
+              event_time: Math.floor(Date.now() / 1000),
+              action_source: 'system_generated',
+              user_data: { external_id: [String(userId)] }
+            },
+            {
+              event_name: 'Subscribe',
+              event_time: Math.floor(Date.now() / 1000),
+              action_source: 'system_generated',
+              user_data: { external_id: [String(userId)] }
+            }
+          ]
+        })
       }
     );
 
-    const data = await response.json();
-    console.log('Meta CAPI Response:', data);
-
-    if (response.ok && data.events_received) {
+    if (response.ok) {
       await statsRef.set({
         sentToMeta: admin.firestore.FieldValue.increment(1)
       }, { merge: true });
@@ -93,30 +64,11 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   return false;
 }
 
-// 1. Track Landing Page Click (fbclid capture karega)
+// 1. Track Landing Page Click
 app.all('/api/track-click', async (req, res) => {
   try {
-    const now = Date.now();
-    
-    const newClick = {
-      timestamp: now,
-      fbclid: req.query.fbclid || req.body.fbclid || '',
-      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
-      userAgent: req.headers['user-agent'] || ''
-    };
-
-    const doc = await statsRef.get();
-    const currentData = doc.exists ? doc.data() : {};
-    const pendingClicks = currentData.pendingClicks || [];
-
-    // Purane pending clicks (10 minute se zyada purane) ko hata do
-    const tenMinutesAgo = now - 10 * 60 * 1000;
-    const stillPending = pendingClicks.filter(c => c.timestamp > tenMinutesAgo);
-    stillPending.push(newClick);
-
     await statsRef.set({
-      totalClicks: admin.firestore.FieldValue.increment(1),
-      pendingClicks: stillPending
+      totalClicks: admin.firestore.FieldValue.increment(1)
     }, { merge: true });
 
     return res.json({ success: true });
@@ -126,96 +78,40 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler
+// 2. Telegram Webhook Handler (Request to Join & Member Join Direct Track)
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
-    let matchedClick = null;
 
-    console.log('Webhook received:', JSON.stringify(update, null, 2));
-
-    // ---- CASE 1: JOIN REQUEST ----
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
-      const user = joinReq.from;
-      
-      console.log('Join request from user:', user.id);
-      
-      const doc = await statsRef.get();
-      const currentData = doc.exists ? doc.data() : {};
-      const pendingClicks = currentData.pendingClicks || [];
-
-      // Sabse recent click dhoondo (jo bhi ho, chahe 1 min pehle ya 10 min pehle)
-      // Kyunki ab sab tumhari hi link se aa rahe hain
-      if (pendingClicks.length > 0) {
-        // Sabse recent click lo
-        matchedClick = pendingClicks[pendingClicks.length - 1];
-        
-        // Us click ko pending se hata do
-        const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
-        await statsRef.set({
-          pendingClicks: updatedPending
-        }, { merge: true });
-      }
-      
       userToTrack = {
-        userId: user.id,
-        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-        username: user.username ? `@${user.username}` : '—',
-        source: 'join_request',
-        matchedClick: matchedClick
+        userId: joinReq.from.id,
+        name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
+        username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
       };
-    }
-
-    // ---- CASE 2: ACTUAL MEMBER JOIN ----
-    if (update.chat_member) {
+    } else if (update.chat_member) {
       const member = update.chat_member;
-      
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
-        
-        console.log('User joined via chat_member:', user.id);
-        
-        const doc = await statsRef.get();
-        const currentData = doc.exists ? doc.data() : {};
-        const pendingClicks = currentData.pendingClicks || [];
-
-        // Sabse recent click dhoondo
-        if (pendingClicks.length > 0) {
-          matchedClick = pendingClicks[pendingClicks.length - 1];
-          
-          const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
-          await statsRef.set({
-            pendingClicks: updatedPending
-          }, { merge: true });
-        }
-        
         userToTrack = {
           userId: user.id,
           name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-          username: user.username ? `@${user.username}` : '—',
-          source: 'chat_member',
-          matchedClick: matchedClick
+          username: user.username ? `@${user.username}` : '—'
         };
       }
     }
 
-    // ---- COUNT KARO AUR META KO SIGNAL BHEJO ----
     if (userToTrack) {
       const doc = await statsRef.get();
       const currentData = doc.exists ? doc.data() : {};
       const recentJoins = currentData.recentJoins || [];
 
+      // Check if user is already counted
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        // Meta ko signal bhejo (real data ke saath)
-        const isMetaSent = await sendMetaCapiEvent(
-          userToTrack.userId, 
-          userToTrack.matchedClick ? userToTrack.matchedClick.ip : '0.0.0.0',
-          userToTrack.matchedClick ? userToTrack.matchedClick.userAgent : 'TelegramBot',
-          userToTrack.matchedClick ? userToTrack.matchedClick.fbclid : null
-        );
+        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
 
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
@@ -227,11 +123,6 @@ app.post('/api', async (req, res) => {
           totalJoins: admin.firestore.FieldValue.increment(1),
           recentJoins: recentJoins
         }, { merge: true });
-
-        console.log('✅ Join counted for user:', userToTrack.userId);
-        console.log('✅ Meta signal sent (Lead + Subscribe):', isMetaSent);
-      } else {
-        console.log('⚠️ User already counted:', userToTrack.userId);
       }
     }
 
@@ -242,7 +133,7 @@ app.post('/api', async (req, res) => {
   }
 });
 
-// 3. Dashboard Stats Endpoint (OLD LOGIC)
+// 3. Dashboard Stats Endpoint
 app.get('/api/stats', async (req, res) => {
   if (req.query.password !== DASHBOARD_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -257,7 +148,7 @@ app.get('/api/stats', async (req, res) => {
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
     
-    // OLD LOGIC: Fake Clicks = Total Clicks - Total Joins
+    // Fake Clicks calculation: Total Clicks minus Real Joins
     const fakeClicks = Math.max(0, totalClicks - totalJoins);
 
     const conversionRate = totalClicks > 0
