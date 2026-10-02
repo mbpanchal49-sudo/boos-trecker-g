@@ -92,7 +92,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   return false;
 }
 
-// 1. Track Landing Page Click (Timestamp ke saath)
+// 1. Track Landing Page Click
 app.all('/api/track-click', async (req, res) => {
   try {
     const now = Date.now();
@@ -132,6 +132,12 @@ app.post('/api', async (req, res) => {
 
     console.log('Webhook received:', JSON.stringify(update, null, 2));
 
+    // ---- PEHLE CHECK KARO KI USER PEHLE SE COUNTED HAI YA NAHI ----
+    const doc = await statsRef.get();
+    const currentData = doc.exists ? doc.data() : {};
+    const recentJoins = currentData.recentJoins || [];
+    const pendingClicks = currentData.pendingClicks || [];
+
     // ---- CASE 1: JOIN REQUEST (30 SECOND WINDOW) ----
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
@@ -139,42 +145,46 @@ app.post('/api', async (req, res) => {
       
       console.log('Join request from user:', user.id);
       
-      const doc = await statsRef.get();
-      const currentData = doc.exists ? doc.data() : {};
-      const pendingClicks = currentData.pendingClicks || [];
-      const now = Date.now();
-      const thirtySecondsAgo = now - 30 * 1000;
-
-      let matchedClick = null;
-      for (let i = pendingClicks.length - 1; i >= 0; i--) {
-        if (pendingClicks[i].timestamp >= thirtySecondsAgo) {
-          matchedClick = pendingClicks[i];
-          break;
-        }
-      }
+      // Check karo ki user pehle se counted hai ya nahi
+      const alreadyCounted = recentJoins.some(j => String(j.userId) === String(user.id));
       
-      if (matchedClick) {
-        console.log('✅ Join request within 30 seconds of landing page click');
-        
-        userToTrack = {
-          userId: user.id,
-          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-          username: user.username ? `@${user.username}` : '—',
-          source: 'join_request',
-          matchedClick: matchedClick
-        };
-
-        const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
-        await statsRef.set({
-          pendingClicks: updatedPending
-        }, { merge: true });
-        
+      if (alreadyCounted) {
+        console.log('⚠️ User already counted, skipping');
       } else {
-        console.log('❌ Join request but no recent landing page click (within 30 sec)');
+        const now = Date.now();
+        const thirtySecondsAgo = now - 30 * 1000;
+
+        let matchedClick = null;
+        for (let i = pendingClicks.length - 1; i >= 0; i--) {
+          if (pendingClicks[i].timestamp >= thirtySecondsAgo) {
+            matchedClick = pendingClicks[i];
+            break;
+          }
+        }
+        
+        if (matchedClick) {
+          console.log('✅ Join request within 30 seconds of landing page click');
+          
+          userToTrack = {
+            userId: user.id,
+            name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+            username: user.username ? `@${user.username}` : '—',
+            source: 'join_request',
+            matchedClick: matchedClick
+          };
+
+          const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+          await statsRef.set({
+            pendingClicks: updatedPending
+          }, { merge: true });
+          
+        } else {
+          console.log('❌ Join request but no recent landing page click (within 30 sec)');
+        }
       }
     }
 
-    // ---- CASE 2: ACTUAL MEMBER JOIN ----
+    // ---- CASE 2: ACTUAL MEMBER JOIN (AGAR APPROVAL KE BAAD AAYE) ----
     if (update.chat_member) {
       const member = update.chat_member;
       
@@ -184,27 +194,36 @@ app.post('/api', async (req, res) => {
         
         console.log('User joined via chat_member. Invite link:', inviteLink);
         
-        if (inviteLink && inviteLink.includes('V_OjtSP5zfM0ZGQ8')) {
-          console.log('✅ User joined via MY landing page link (chat_member)');
-          userToTrack = {
-            userId: user.id,
-            name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-            username: user.username ? `@${user.username}` : '—',
-            source: 'chat_member'
-          };
+        // Check karo ki user pehle se counted hai ya nahi
+        const alreadyCounted = recentJoins.some(j => String(j.userId) === String(user.id));
+        
+        if (alreadyCounted) {
+          console.log('⚠️ User already counted (via join request), skipping double count');
         } else {
-          console.log('❌ User joined via different link:', inviteLink);
+          // Agar invite link match karta hai, to count karo
+          if (inviteLink && inviteLink.includes('V_OjtSP5zfM0ZGQ8')) {
+            console.log('✅ User joined via MY landing page link (chat_member)');
+            userToTrack = {
+              userId: user.id,
+              name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+              username: user.username ? `@${user.username}` : '—',
+              source: 'chat_member'
+            };
+          } else {
+            console.log('❌ User joined via different link:', inviteLink);
+          }
         }
       }
     }
 
     // ---- COUNT KARO AUR META KO SIGNAL BHEJO ----
     if (userToTrack) {
-      const doc = await statsRef.get();
-      const currentData = doc.exists ? doc.data() : {};
-      const recentJoins = currentData.recentJoins || [];
+      // Dobara check karo (race condition se bachne ke liye)
+      const freshDoc = await statsRef.get();
+      const freshData = freshDoc.exists ? freshDoc.data() : {};
+      const freshJoins = freshData.recentJoins || [];
 
-      const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
+      const exists = freshJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
         const isMetaSent = await sendMetaCapiEvent(
           userToTrack.userId, 
@@ -216,18 +235,18 @@ app.post('/api', async (req, res) => {
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
 
-        recentJoins.unshift(userToTrack);
-        if (recentJoins.length > 50) recentJoins.pop();
+        freshJoins.unshift(userToTrack);
+        if (freshJoins.length > 50) freshJoins.pop();
 
         await statsRef.set({
           totalJoins: admin.firestore.FieldValue.increment(1),
-          recentJoins: recentJoins
+          recentJoins: freshJoins
         }, { merge: true });
 
         console.log('✅ Join counted for user:', userToTrack.userId);
         console.log('✅ Meta signal sent (Lead + Subscribe):', isMetaSent);
       } else {
-        console.log('⚠️ User already counted:', userToTrack.userId);
+        console.log('⚠️ User already counted (race condition check):', userToTrack.userId);
       }
     }
 
