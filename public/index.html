@@ -146,10 +146,9 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
   }
 
   document.getElementById('joinBtn').addEventListener('click', function(e){
-    // Backend ko click track karo
+    // fbq('track', 'Lead') HATA DIYA - ab backend se jayega
     trackClick();
 
-    // Button animation
     this.style.transform = 'scale(.94)';
     const t = this;
     setTimeout(function(){ t.style.transform = ''; }, 180);
