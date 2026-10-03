@@ -38,7 +38,7 @@ async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
 
   try {
     const userData = (new UserData())
-      .setExternalId(String(userId))
+      .setExternalId([String(userId)])  // ARRAY ME DALA - ye fix hai
       .setClientIpAddress(userIp || '0.0.0.0')
       .setClientUserAgent(userAgent || 'Unknown');
 
@@ -100,6 +100,7 @@ app.all('/api/track-click', async (req, res) => {
     const currentData = doc.exists ? doc.data() : {};
     const pendingClicks = currentData.pendingClicks || [];
 
+    // Purane pending clicks (10 minute se zyada purane) ko hata do
     const tenMinutesAgo = now - 10 * 60 * 1000;
     const stillPending = pendingClicks.filter(c => c.timestamp > tenMinutesAgo);
     stillPending.push(newClick);
@@ -134,6 +135,7 @@ app.post('/api', async (req, res) => {
       const currentData = doc.exists ? doc.data() : {};
       const pendingClicks = currentData.pendingClicks || [];
 
+      // Sabse recent click dhoondo
       if (pendingClicks.length > 0) {
         matchedClick = pendingClicks[pendingClicks.length - 1];
         const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
