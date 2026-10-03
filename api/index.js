@@ -1,7 +1,5 @@
 const express = require('express');
 const admin = require('firebase-admin');
-const bizSdk = require('facebook-nodejs-business-sdk');
-
 const app = express();
 
 app.use(express.json());
@@ -26,58 +24,69 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// ---------------- META BUSINESS SDK SETUP ----------------
-const ServerEvent = bizSdk.ServerEvent;
-const EventRequest = bizSdk.EventRequest;
-const UserData = bizSdk.UserData;
-const CustomData = bizSdk.CustomData;
-
-// Meta Conversions API (CAPI) Helper - Business SDK use karega
+// Meta Conversions API (CAPI) Helper - RAW FETCH (100% Working)
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
 
   try {
-    const userData = (new UserData())
-      .setExternalId([String(userId)])
-      .setClientIpAddress(userIp || '0.0.0.0')
-      .setClientUserAgent(userAgent || 'Unknown');
+    const userData = {
+      external_id: [String(userId)],
+      client_ip_address: userIp || '0.0.0.0',
+      client_user_agent: userAgent || 'Unknown'
+    };
 
     if (fbc) {
-      userData.setFbc(fbc);
+      userData.fbc = fbc;
     }
-
-    const customData = (new CustomData())
-      .setCurrency('USD')
-      .setValue(1.00)
-      .setContentName('Telegram Channel Join');
 
     const currentTime = Math.floor(Date.now() / 1000);
 
-    const leadEvent = (new ServerEvent())
-      .setEventName('Lead')
-      .setEventTime(currentTime)
-      .setUserData(userData)
-      .setCustomData(customData)
-      .setActionSource('website');
+    const payload = {
+      data: [
+        {
+          event_name: 'Lead',
+          event_time: currentTime,
+          action_source: 'website',
+          user_data: userData,
+          custom_data: {
+            currency: 'USD',
+            value: 1.00,
+            content_name: 'Telegram Channel Join'
+          }
+        },
+        {
+          event_name: 'Subscribe',
+          event_time: currentTime,
+          action_source: 'website',
+          user_data: userData,
+          custom_data: {
+            currency: 'USD',
+            value: 1.00,
+            content_name: 'Telegram Channel Join'
+          }
+        }
+      ]
+    };
 
-    const subscribeEvent = (new ServerEvent())
-      .setEventName('Subscribe')
-      .setEventTime(currentTime)
-      .setUserData(userData)
-      .setCustomData(customData)
-      .setActionSource('website');
+    const response = await fetch(
+      `https://graph.facebook.com/v20.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }
+    );
 
-    const eventRequest = (new EventRequest(META_ACCESS_TOKEN, META_PIXEL_ID))
-      .setEvents([leadEvent, subscribeEvent]);
+    const data = await response.json();
+    console.log('Meta CAPI Response:', data);
 
-    const response = await eventRequest.execute();
-    console.log('Meta CAPI Response:', response);
-
-    await statsRef.set({
-      sentToMeta: admin.firestore.FieldValue.increment(1)
-    }, { merge: true });
-
-    return true;
+    if (response.ok && data.events_received) {
+      await statsRef.set({
+        sentToMeta: admin.firestore.FieldValue.increment(1)
+      }, { merge: true });
+      return true;
+    }
+    return false;
   } catch (err) {
     console.error('Meta CAPI Error:', err.message);
     return false;
