@@ -32,11 +32,6 @@ const EventRequest = bizSdk.EventRequest;
 const UserData = bizSdk.UserData;
 const CustomData = bizSdk.CustomData;
 
-// Meta API Version set karo (v20.0 latest hai)
-if (META_ACCESS_TOKEN) {
-  bizSdk.FacebookAdsApi.init(META_ACCESS_TOKEN).setApiVersion('v20.0');
-}
-
 // Meta Conversions API (CAPI) Helper - Business SDK use karega
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
