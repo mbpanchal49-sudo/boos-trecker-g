@@ -1,5 +1,7 @@
 const express = require('express');
 const admin = require('firebase-admin');
+const bizSdk = require('facebook-nodejs-business-sdk');
+
 const app = express();
 
 app.use(express.json());
@@ -24,51 +26,87 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper
-async function sendMetaCapiEvent(userId) {
-  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
-  try {
-    const response = await fetch(
-      `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events?access_token=${META_ACCESS_TOKEN}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: [
-            {
-              event_name: 'Lead',
-              event_time: Math.floor(Date.now() / 1000),
-              action_source: 'system_generated',
-              user_data: { external_id: [String(userId)] }
-            },
-            {
-              event_name: 'Subscribe',
-              event_time: Math.floor(Date.now() / 1000),
-              action_source: 'system_generated',
-              user_data: { external_id: [String(userId)] }
-            }
-          ]
-        })
-      }
-    );
+// ---------------- META BUSINESS SDK SETUP ----------------
+const ServerEvent = bizSdk.ServerEvent;
+const EventRequest = bizSdk.EventRequest;
+const UserData = bizSdk.UserData;
+const CustomData = bizSdk.CustomData;
 
-    if (response.ok) {
-      await statsRef.set({
-        sentToMeta: admin.firestore.FieldValue.increment(1)
-      }, { merge: true });
-      return true;
+// Meta Conversions API (CAPI) Helper - Business SDK use karega
+async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
+  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
+
+  try {
+    const userData = (new UserData())
+      .setExternalId(String(userId))
+      .setClientIpAddress(userIp || '0.0.0.0')
+      .setClientUserAgent(userAgent || 'Unknown');
+
+    if (fbc) {
+      userData.setFbc(fbc);
     }
+
+    const customData = (new CustomData())
+      .setCurrency('USD')
+      .setValue(1.00)
+      .setContentName('Telegram Channel Join');
+
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    const leadEvent = (new ServerEvent())
+      .setEventName('Lead')
+      .setEventTime(currentTime)
+      .setUserData(userData)
+      .setCustomData(customData)
+      .setActionSource('website');
+
+    const subscribeEvent = (new ServerEvent())
+      .setEventName('Subscribe')
+      .setEventTime(currentTime)
+      .setUserData(userData)
+      .setCustomData(customData)
+      .setActionSource('website');
+
+    const eventRequest = (new EventRequest(META_ACCESS_TOKEN, META_PIXEL_ID))
+      .setEvents([leadEvent, subscribeEvent]);
+
+    const response = await eventRequest.execute();
+    console.log('Meta CAPI Response:', response);
+
+    await statsRef.set({
+      sentToMeta: admin.firestore.FieldValue.increment(1)
+    }, { merge: true });
+
+    return true;
   } catch (err) {
     console.error('Meta CAPI Error:', err.message);
+    return false;
   }
-  return false;
 }
 
 // 1. Track Landing Page Click
 app.all('/api/track-click', async (req, res) => {
   try {
+    const now = Date.now();
+
+    const newClick = {
+      timestamp: now,
+      fbclid: req.query.fbclid || req.body.fbclid || '',
+      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] || ''
+    };
+
+    const doc = await statsRef.get();
+    const currentData = doc.exists ? doc.data() : {};
+    const pendingClicks = currentData.pendingClicks || [];
+
+    const tenMinutesAgo = now - 10 * 60 * 1000;
+    const stillPending = pendingClicks.filter(c => c.timestamp > tenMinutesAgo);
+    stillPending.push(newClick);
+
     await statsRef.set({
-      totalClicks: admin.firestore.FieldValue.increment(1)
+      totalClicks: admin.firestore.FieldValue.increment(1),
+      pendingClicks: stillPending
     }, { merge: true });
 
     return res.json({ success: true });
@@ -78,43 +116,83 @@ app.all('/api/track-click', async (req, res) => {
   }
 });
 
-// 2. Telegram Webhook Handler (Request to Join & Member Join Direct Track)
+// 2. Telegram Webhook Handler
 app.post('/api', async (req, res) => {
   try {
     const update = req.body;
     let userToTrack = null;
+    let matchedClick = null;
 
+    console.log('Webhook received:', JSON.stringify(update, null, 2));
+
+    // ---- JOIN REQUEST ----
     if (update.chat_join_request) {
       const joinReq = update.chat_join_request;
+      const user = joinReq.from;
+
+      const doc = await statsRef.get();
+      const currentData = doc.exists ? doc.data() : {};
+      const pendingClicks = currentData.pendingClicks || [];
+
+      if (pendingClicks.length > 0) {
+        matchedClick = pendingClicks[pendingClicks.length - 1];
+        const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+        await statsRef.set({ pendingClicks: updatedPending }, { merge: true });
+      }
+
       userToTrack = {
-        userId: joinReq.from.id,
-        name: `${joinReq.from.first_name || ''} ${joinReq.from.last_name || ''}`.trim() || 'Telegram User',
-        username: joinReq.from.username ? `@${joinReq.from.username}` : '—'
+        userId: user.id,
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
+        username: user.username ? `@${user.username}` : '—',
+        source: 'join_request',
+        matchedClick: matchedClick
       };
-    } else if (update.chat_member) {
+    }
+
+    // ---- MEMBER JOIN ----
+    if (update.chat_member) {
       const member = update.chat_member;
       if (['member', 'administrator', 'creator'].includes(member.new_chat_member?.status)) {
         const user = member.new_chat_member.user;
+
+        const doc = await statsRef.get();
+        const currentData = doc.exists ? doc.data() : {};
+        const pendingClicks = currentData.pendingClicks || [];
+
+        if (pendingClicks.length > 0) {
+          matchedClick = pendingClicks[pendingClicks.length - 1];
+          const updatedPending = pendingClicks.filter(c => c.timestamp !== matchedClick.timestamp);
+          await statsRef.set({ pendingClicks: updatedPending }, { merge: true });
+        }
+
         userToTrack = {
           userId: user.id,
           name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User',
-          username: user.username ? `@${user.username}` : '—'
+          username: user.username ? `@${user.username}` : '—',
+          source: 'chat_member',
+          matchedClick: matchedClick
         };
       }
     }
 
+    // ---- COUNT KARO AUR META KO SIGNAL BHEJO ----
     if (userToTrack) {
       const doc = await statsRef.get();
       const currentData = doc.exists ? doc.data() : {};
       const recentJoins = currentData.recentJoins || [];
 
-      // Check if user is already counted
       const exists = recentJoins.some(j => String(j.userId) === String(userToTrack.userId));
       if (!exists) {
-        const isMetaSent = await sendMetaCapiEvent(userToTrack.userId);
+        const isMetaSent = await sendMetaCapiEvent(
+          userToTrack.userId,
+          userToTrack.matchedClick ? userToTrack.matchedClick.ip : '0.0.0.0',
+          userToTrack.matchedClick ? userToTrack.matchedClick.userAgent : 'TelegramBot',
+          userToTrack.matchedClick ? userToTrack.matchedClick.fbclid : null
+        );
 
         userToTrack.joined_at = new Date().toISOString();
         userToTrack.metaStatus = isMetaSent ? 'Sent' : 'Pending';
+        userToTrack.sent_to_meta = isMetaSent;
 
         recentJoins.unshift(userToTrack);
         if (recentJoins.length > 50) recentJoins.pop();
@@ -123,6 +201,11 @@ app.post('/api', async (req, res) => {
           totalJoins: admin.firestore.FieldValue.increment(1),
           recentJoins: recentJoins
         }, { merge: true });
+
+        console.log('✅ Join counted for user:', userToTrack.userId);
+        console.log('✅ Meta signal sent (Lead + Subscribe):', isMetaSent);
+      } else {
+        console.log('⚠️ User already counted:', userToTrack.userId);
       }
     }
 
@@ -147,8 +230,6 @@ app.get('/api/stats', async (req, res) => {
 
     const totalClicks = data.totalClicks || 0;
     const totalJoins = data.totalJoins || 0;
-    
-    // Fake Clicks calculation: Total Clicks minus Real Joins
     const fakeClicks = Math.max(0, totalClicks - totalJoins);
 
     const conversionRate = totalClicks > 0
