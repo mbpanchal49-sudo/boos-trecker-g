@@ -122,22 +122,31 @@ src="https://www.facebook.com/tr?id=1475588734670973&ev=PageView&noscript=1"
     }, 4000);
   })();
 
+  // Facebook Click ID (fbclid) capture karo
+  function getFbclid() {
+    var urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('fbclid') || '';
+  }
+
+  // Backend ko click track karo (fbclid ke saath)
   function trackClick() {
+    var fbclid = getFbclid();
+    var payload = { fbclid: fbclid };
+
     if (navigator.sendBeacon) {
-      navigator.sendBeacon('/api/track-click');
+      navigator.sendBeacon('/api/track-click', JSON.stringify(payload));
     } else {
-      fetch('/api/track-click', { method: 'GET', keepalive: true }).catch(function(e){ console.warn(e); });
+      fetch('/api/track-click', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(function(e){ console.warn(e); });
     }
   }
 
   document.getElementById('joinBtn').addEventListener('click', function(e){
-    if (typeof fbq === 'function') {
-      fbq('track', 'Lead', {
-        content_name: 'Telegram Channel Join',
-        content_category: 'Channel'
-      });
-    }
-    
+    // fbq('track', 'Lead') HATA DIYA - ab backend se jayega
     trackClick();
 
     this.style.transform = 'scale(.94)';
