@@ -24,13 +24,12 @@ const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '123456';
 
-// Meta Conversions API (CAPI) Helper - RAW FETCH (100% Working)
+// Meta Conversions API (CAPI) Helper - BINA external_id KE
 async function sendMetaCapiEvent(userId, userIp, userAgent, fbc) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) return false;
 
   try {
     const userData = {
-      external_id: [String(userId)],
       client_ip_address: userIp || '0.0.0.0',
       client_user_agent: userAgent || 'Unknown'
     };
